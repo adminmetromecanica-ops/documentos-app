@@ -4,6 +4,14 @@ import { supabase } from '../lib/supabaseClient'
 import { AREAS_CONFIG, TODAS_LAS_AREAS } from '../lib/areasConfig'
 import UploadForm from '../components/UploadForm'
 
+// Visibilidad cruzada de solo lectura (igual que las políticas de MinIO/RLS)
+const VISIBILIDAD_CRUZADA = {
+  laboratorio: ['logistica'],
+  logistica: ['laboratorio'],
+  comercial: ['laboratorio', 'logistica'],
+  contabilidad: ['laboratorio', 'logistica', 'comercial'],
+}
+
 export default function OTDetail({ profile }) {
   const { otNumber } = useParams()
   const navigate = useNavigate()
@@ -12,7 +20,14 @@ export default function OTDetail({ profile }) {
   const [activeArea, setActiveArea] = useState(profile.area === 'gerencia' ? 'laboratorio' : profile.area)
 
   const esGerencia = profile.area === 'gerencia'
-  const areasVisibles = esGerencia ? TODAS_LAS_AREAS : [profile.area]
+
+  // Áreas que este usuario puede ver (propia + las de solo lectura permitidas)
+  const areasVisibles = esGerencia
+    ? TODAS_LAS_AREAS
+    : [profile.area, ...(VISIBILIDAD_CRUZADA[profile.area] || [])]
+
+  // Es la propia área del usuario (donde sí puede subir), o gerencia que puede subir a cualquiera
+  const puedeSubir = esGerencia || activeArea === profile.area
 
   useEffect(() => {
     async function loadService() {
@@ -27,10 +42,13 @@ export default function OTDetail({ profile }) {
   }, [otNumber])
 
   async function loadDocumentos() {
-    let query = supabase.from('documentos').select('*').eq('ot_number', otNumber)
-    if (!esGerencia) query = query.eq('area', profile.area)
-    else query = query.eq('area', activeArea)
-    const { data } = await query.order('created_at', { ascending: false })
+    // La política RLS ya decide qué puede leer cada área — el frontend solo pide lo que el usuario está viendo
+    const { data } = await supabase
+      .from('documentos')
+      .select('*')
+      .eq('ot_number', otNumber)
+      .eq('area', activeArea)
+      .order('created_at', { ascending: false })
     setDocumentos(data || [])
   }
 
@@ -54,7 +72,7 @@ export default function OTDetail({ profile }) {
         </div>
       </div>
 
-      {esGerencia && (
+      {areasVisibles.length > 1 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
           {areasVisibles.map((a) => (
             <button
@@ -63,6 +81,7 @@ export default function OTDetail({ profile }) {
               onClick={() => setActiveArea(a)}
             >
               {AREAS_CONFIG[a].label}
+              {!esGerencia && a !== profile.area && ' 👁'}
             </button>
           ))}
         </div>
@@ -70,13 +89,19 @@ export default function OTDetail({ profile }) {
 
       <h3>{configArea.label}</h3>
 
-      <UploadForm
-        otNumber={otNumber}
-        area={activeArea}
-        tipos={configArea.tipos}
-        userId={profile.id}
-        onUploaded={loadDocumentos}
-      />
+      {puedeSubir ? (
+        <UploadForm
+          otNumber={otNumber}
+          area={activeArea}
+          tipos={configArea.tipos}
+          userId={profile.id}
+          onUploaded={loadDocumentos}
+        />
+      ) : (
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic' }}>
+          Solo lectura — esta área no te pertenece.
+        </p>
+      )}
 
       <div className="card">
         <h4 style={{ marginTop: 0 }}>Documentos subidos</h4>
