@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import CalendarView from '../components/CalendarView'
 
 // Orden y etiquetas de los grupos de estado. Los que no coincidan con esta
 // lista caen en un grupo "Otros" al final, así nuevos estados no rompen nada.
@@ -20,6 +21,7 @@ export default function Dashboard({ profile, onLogout }) {
   const [search, setSearch] = useState('')
   const [colapsados, setColapsados] = useState({})
   const [soloPendientes, setSoloPendientes] = useState(false)
+  const [vista, setVista] = useState('lista')
   const navigate = useNavigate()
 
   const esGerencia = profile?.area === 'gerencia'
@@ -106,9 +108,27 @@ export default function Dashboard({ profile, onLogout }) {
             Área: <strong style={{ color: 'var(--ocean-accent)' }}>{profile?.area || '—'}</strong>
           </p>
         </div>
-        <button className="btn btn-secondary" onClick={onLogout}>Salir</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className={vista === 'lista' ? 'btn' : 'btn btn-secondary'}
+            onClick={() => setVista('lista')}
+          >
+            Lista
+          </button>
+          <button
+            className={vista === 'calendario' ? 'btn' : 'btn btn-secondary'}
+            onClick={() => setVista('calendario')}
+          >
+            Calendario
+          </button>
+          <button className="btn btn-secondary" onClick={onLogout}>Salir</button>
+        </div>
       </div>
 
+      {vista === 'calendario' && <CalendarView services={filtered} />}
+
+      {vista === 'lista' && (
+        <>
       <input
         placeholder="Buscar por OT o cliente..."
         value={search}
@@ -185,6 +205,8 @@ export default function Dashboard({ profile, onLogout }) {
           </div>
         )
       })}
+        </>
+      )}
     </div>
   )
 }
