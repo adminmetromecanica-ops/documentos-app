@@ -2,10 +2,22 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
+// Orden y etiquetas de los grupos de estado. Los que no coincidan con esta
+// lista caen en un grupo "Otros" al final, así nuevos estados no rompen nada.
+const ORDEN_ESTADOS = [
+  { key: 'pendiente-cert', label: 'Pendiente de certificado' },
+  { key: 'pendiente-fact', label: 'Pendiente de facturación' },
+  { key: 'pendiente-faci', label: 'Pendiente de facturación' },
+  { key: 'concluido', label: 'Concluido' },
+]
+
+const PRIORIDAD_ORDEN = { alta: 0, media: 1, normal: 2 }
+
 export default function Dashboard({ profile, onLogout }) {
   const [services, setServices] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [colapsados, setColapsados] = useState({})
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -14,7 +26,7 @@ export default function Dashboard({ profile, onLogout }) {
         .from('services')
         .select('id, ot_number, client, service_type, status, priority, due_date')
         .order('created_at', { ascending: false })
-        .limit(100)
+        .limit(300)
       if (!error) setServices(data || [])
       setLoading(false)
     }
@@ -26,10 +38,37 @@ export default function Dashboard({ profile, onLogout }) {
     (s.client || '').toLowerCase().includes(search.toLowerCase())
   )
 
+  // Agrupar por estado
+  const grupos = {}
+  filtered.forEach((s) => {
+    const key = s.status || 'sin-estado'
+    if (!grupos[key]) grupos[key] = []
+    grupos[key].push(s)
+  })
+
+  // Ordenar cada grupo: prioridad alta primero, luego por fecha más próxima
+  Object.values(grupos).forEach((lista) => {
+    lista.sort((a, b) => {
+      const pa = PRIORIDAD_ORDEN[a.priority] ?? 3
+      const pb = PRIORIDAD_ORDEN[b.priority] ?? 3
+      if (pa !== pb) return pa - pb
+      return (a.due_date || '').localeCompare(b.due_date || '')
+    })
+  })
+
+  // Definir el orden de aparición de los grupos en pantalla
+  const clavesConocidas = ORDEN_ESTADOS.map((e) => e.key)
+  const clavesOtras = Object.keys(grupos).filter((k) => !clavesConocidas.includes(k))
+  const ordenFinal = [...ORDEN_ESTADOS, ...clavesOtras.map((k) => ({ key: k, label: k }))]
+
   function badgeClass(priority) {
     if (priority === 'alta') return 'badge badge-alta'
     if (priority === 'media') return 'badge badge-media'
     return 'badge badge-normal'
+  }
+
+  function toggleGrupo(key) {
+    setColapsados((prev) => ({ ...prev, [key]: !prev[key] }))
   }
 
   return (
@@ -50,22 +89,64 @@ export default function Dashboard({ profile, onLogout }) {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      <div className="card" style={{ padding: 0 }}>
-        {loading && <p style={{ padding: 20 }}>Cargando...</p>}
-        {!loading && filtered.length === 0 && <p style={{ padding: 20 }}>No hay servicios registrados.</p>}
-        {filtered.map((s) => (
-          <div key={s.id} className="ot-row" onClick={() => navigate(`/ot/${s.ot_number}`)}>
-            <div>
-              <strong>{s.ot_number}</strong>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
+      {loading && <p>Cargando...</p>}
+      {!loading && filtered.length === 0 && <p>No hay servicios registrados.</p>}
+
+      {!loading && ordenFinal.map(({ key, label }) => {
+        const lista = grupos[key]
+        if (!lista || lista.length === 0) return null
+        const colapsado = colapsados[key]
+
+        return (
+          <div key={key} className="card" style={{ padding: 0, marginBottom: 14 }}>
+            <div
+              onClick={() => toggleGrupo(key)}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '14px 18px',
+                cursor: 'pointer',
+                borderBottom: colapsado ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{colapsado ? '▸' : '▾'}</span>
+                <strong>{label}</strong>
+              </div>
+              <span
+                style={{
+                  background: 'rgba(45,212,191,0.15)',
+                  color: 'var(--ocean-accent)',
+                  borderRadius: 20,
+                  padding: '2px 10px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {lista.length}
+              </span>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <span className={badgeClass(s.priority)}>{s.priority}</span>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{s.status}</div>
-            </div>
+
+            {!colapsado && lista.map((s) => (
+              <div key={s.id} className="ot-row" onClick={() => navigate(`/ot/${s.ot_number}`)}>
+                <div>
+                  <strong>{s.ot_number}</strong>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <span className={badgeClass(s.priority)}>{s.priority}</span>
+                  {s.due_date && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                      {new Date(s.due_date).toLocaleDateString('es-PE')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        )
+      })}
     </div>
   )
 }
