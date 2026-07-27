@@ -46,13 +46,14 @@ export default function Dashboard({ profile, onLogout }) {
     grupos[key].push(s)
   })
 
-  // Ordenar cada grupo: prioridad alta primero, luego por fecha más próxima
+  // Ordenar cada grupo por fecha (día, mes, año) de forma ascendente.
+  // Las OT sin fecha quedan al final del grupo.
   Object.values(grupos).forEach((lista) => {
     lista.sort((a, b) => {
-      const pa = PRIORIDAD_ORDEN[a.priority] ?? 3
-      const pb = PRIORIDAD_ORDEN[b.priority] ?? 3
-      if (pa !== pb) return pa - pb
-      return (a.due_date || '').localeCompare(b.due_date || '')
+      if (!a.due_date && !b.due_date) return 0
+      if (!a.due_date) return 1
+      if (!b.due_date) return -1
+      return new Date(a.due_date) - new Date(b.due_date)
     })
   })
 
