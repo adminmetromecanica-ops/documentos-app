@@ -15,10 +15,14 @@ const PRIORIDAD_ORDEN = { alta: 0, media: 1, normal: 2 }
 
 export default function Dashboard({ profile, onLogout }) {
   const [services, setServices] = useState([])
+  const [otsConDocumentoDeMiArea, setOtsConDocumentoDeMiArea] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [colapsados, setColapsados] = useState({})
+  const [soloPendientes, setSoloPendientes] = useState(false)
   const navigate = useNavigate()
+
+  const esGerencia = profile?.area === 'gerencia'
 
   useEffect(() => {
     async function loadServices() {
@@ -33,10 +37,31 @@ export default function Dashboard({ profile, onLogout }) {
     loadServices()
   }, [])
 
-  const filtered = services.filter((s) =>
-    (s.ot_number || '').toLowerCase().includes(search.toLowerCase()) ||
-    (s.client || '').toLowerCase().includes(search.toLowerCase())
-  )
+  useEffect(() => {
+    // Para el filtro "pendientes de mi área": qué OT ya tienen al menos
+    // un documento subido por mi propia área (gerencia no aplica este filtro).
+    async function loadDocumentosDeMiArea() {
+      if (esGerencia || !profile?.area) return
+      const { data, error } = await supabase
+        .from('documentos')
+        .select('ot_number')
+        .eq('area', profile.area)
+      if (!error) setOtsConDocumentoDeMiArea(new Set((data || []).map((d) => d.ot_number)))
+    }
+    loadDocumentosDeMiArea()
+  }, [profile?.area, esGerencia])
+
+  const estaBuscando = search.trim() !== ''
+
+  const filtered = services
+    .filter((s) =>
+      (s.ot_number || '').toLowerCase().includes(search.toLowerCase()) ||
+      (s.client || '').toLowerCase().includes(search.toLowerCase())
+    )
+    .filter((s) => {
+      if (!soloPendientes || esGerencia) return true
+      return !otsConDocumentoDeMiArea.has(s.ot_number)
+    })
 
   // Agrupar por estado
   const grupos = {}
@@ -90,13 +115,25 @@ export default function Dashboard({ profile, onLogout }) {
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      {!esGerencia && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, cursor: 'pointer', fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={soloPendientes}
+            onChange={(e) => setSoloPendientes(e.target.checked)}
+            style={{ width: 'auto', margin: 0 }}
+          />
+          Mostrar solo OT sin documento subido de mi área
+        </label>
+      )}
+
       {loading && <p>Cargando...</p>}
       {!loading && filtered.length === 0 && <p>No hay servicios registrados.</p>}
 
       {!loading && ordenFinal.map(({ key, label }) => {
         const lista = grupos[key]
         if (!lista || lista.length === 0) return null
-        const colapsado = colapsados[key]
+        const colapsado = estaBuscando ? false : colapsados[key]
 
         return (
           <div key={key} className="card" style={{ padding: 0, marginBottom: 14 }}>
