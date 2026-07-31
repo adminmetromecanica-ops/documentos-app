@@ -4,12 +4,13 @@ import { supabase } from './lib/supabaseClient'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import OTDetail from './pages/OTDetail'
+import Portal from './pages/Portal'
+import AdminHerramientas from './pages/AdminHerramientas'
 
 export default function App() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
@@ -20,7 +21,6 @@ export default function App() {
     })
     return () => listener.subscription.unsubscribe()
   }, [])
-
   useEffect(() => {
     async function loadProfile() {
       if (!session?.user) { setProfile(null); return }
@@ -33,21 +33,20 @@ export default function App() {
     }
     loadProfile()
   }, [session])
-
   async function handleLogout() {
     await supabase.auth.signOut()
   }
-
   if (loading) return <div className="container">Cargando...</div>
   if (!session) return <Login />
   if (!profile) return <div className="container">No se encontró tu perfil. Contacta al administrador.</div>
   if (!profile.area) return <div className="container">Tu cuenta no tiene un área asignada. Contacta al administrador.</div>
-
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Dashboard profile={profile} onLogout={handleLogout} />} />
+        <Route path="/" element={<Portal profile={profile} onLogout={handleLogout} />} />
+        <Route path="/ots" element={<Dashboard profile={profile} onLogout={handleLogout} />} />
         <Route path="/ot/:otNumber" element={<OTDetail profile={profile} />} />
+        <Route path="/admin/herramientas" element={<AdminHerramientas profile={profile} onLogout={handleLogout} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>
