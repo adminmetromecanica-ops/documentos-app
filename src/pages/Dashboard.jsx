@@ -103,7 +103,8 @@ export default function Dashboard({ profile, onLogout }) {
     <div className="container">
       <div className="top-bar">
         <div>
-          <h2 style={{ margin: 0 }}>Órdenes de Trabajo</h2>
+          <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al portal</a>
+          <h2 style={{ margin: '8px 0 0' }}>Órdenes de Trabajo</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '4px 0 0' }}>
             Área: <strong style={{ color: 'var(--ocean-accent)' }}>{profile?.area || '—'}</strong>
           </p>
