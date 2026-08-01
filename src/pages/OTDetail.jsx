@@ -12,6 +12,21 @@ const VISIBILIDAD_CRUZADA = {
   contabilidad: ['laboratorio', 'logistica', 'comercial'],
 }
 
+// Registra un evento en el log de auditoría. Falla en silencio: la
+// auditoría nunca debe romper la experiencia de uso de la app.
+async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
+  try {
+    await supabase.from('log_auditoria').insert({
+      usuario_id: usuarioId,
+      accion,
+      ot_number: otNumber,
+      detalle,
+    })
+  } catch (e) {
+    console.error('No se pudo registrar auditoría:', e)
+  }
+}
+
 export default function OTDetail({ profile }) {
   const { otNumber } = useParams()
   const navigate = useNavigate()
@@ -41,6 +56,13 @@ export default function OTDetail({ profile }) {
     loadService()
   }, [otNumber])
 
+  // Registrar en el log de auditoría cada vez que se abre esta OT
+  useEffect(() => {
+    if (!profile?.id || !otNumber) return
+    registrarAuditoria(profile.id, 'ver', otNumber, `Área vista: ${activeArea}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otNumber, activeArea, profile?.id])
+
   async function loadDocumentos() {
     // La política RLS ya decide qué puede leer cada área — el frontend solo pide lo que el usuario está viendo
     const { data } = await supabase
@@ -56,6 +78,11 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeArea, otNumber])
+
+  function handleUploaded() {
+    registrarAuditoria(profile.id, 'subir', otNumber, `Área: ${activeArea}`)
+    loadDocumentos()
+  }
 
   const configArea = AREAS_CONFIG[activeArea]
 
@@ -95,7 +122,7 @@ export default function OTDetail({ profile }) {
           area={activeArea}
           tipos={configArea.tipos}
           userId={profile.id}
-          onUploaded={loadDocumentos}
+          onUploaded={handleUploaded}
         />
       ) : (
         <p style={{ color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic' }}>
