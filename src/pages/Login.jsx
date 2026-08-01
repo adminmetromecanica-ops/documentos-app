@@ -7,13 +7,125 @@ export default function Login() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Paso 2: verificación TOTP (solo aparece si la cuenta tiene 2FA activado)
+  const [pidiendoCodigo, setPidiendoCodigo] = useState(false)
+  const [codigo, setCodigo] = useState('')
+  const [factorId, setFactorId] = useState(null)
+
   async function handleLogin(e) {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError('Correo o contraseña incorrectos.')
+
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email, password })
+    if (loginError) {
+      setError('Correo o contraseña incorrectos.')
+      setLoading(false)
+      return
+    }
+
+    // ¿Esta cuenta requiere un segundo factor (TOTP)?
+    const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+    if (aalError) {
+      setError('No se pudo verificar el nivel de seguridad de la cuenta.')
+      setLoading(false)
+      return
+    }
+
+    if (aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
+      // Tiene 2FA activo: buscamos el factor TOTP verificado para retarlo
+      const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors()
+      if (factorsError) {
+        setError('No se pudo cargar el segundo factor de esta cuenta.')
+        setLoading(false)
+        return
+      }
+      const totp = (factorsData.totp || []).find((f) => f.status === 'verified')
+      if (!totp) {
+        setError('Esta cuenta requiere un segundo factor, pero no se encontró configurado.')
+        setLoading(false)
+        return
+      }
+      setFactorId(totp.id)
+      setPidiendoCodigo(true)
+      setLoading(false)
+      return
+    }
+
+    // Sin 2FA: el login ya quedó completo (App.jsx detecta la sesión solo)
     setLoading(false)
+  }
+
+  async function handleVerificarCodigo(e) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+
+    const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({ factorId })
+    if (challengeError) {
+      setError('No se pudo iniciar la verificación. Intenta de nuevo.')
+      setLoading(false)
+      return
+    }
+
+    const { error: verifyError } = await supabase.auth.mfa.verify({
+      factorId,
+      challengeId: challengeData.id,
+      code: codigo,
+    })
+
+    if (verifyError) {
+      setError('Código incorrecto. Verifica tu app de autenticación e intenta de nuevo.')
+      setCodigo('')
+      setLoading(false)
+      return
+    }
+
+    // Verificado: la sesión sube a aal2 y App.jsx detecta el cambio automáticamente
+  }
+
+  async function handleCancelarCodigo() {
+    await supabase.auth.signOut()
+    setPidiendoCodigo(false)
+    setCodigo('')
+    setFactorId(null)
+    setError('')
+  }
+
+  if (pidiendoCodigo) {
+    return (
+      <div className="container" style={{ maxWidth: 380, paddingTop: 80 }}>
+        <div className="card">
+          <h2 style={{ marginTop: 0 }}>Verificación en dos pasos</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
+            Ingresa el código de 6 dígitos de tu app de autenticación (Google Authenticator, Authy, etc.).
+          </p>
+          <form onSubmit={handleVerificarCodigo}>
+            <label>Código</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={codigo}
+              onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ''))}
+              autoFocus
+              required
+            />
+            <button className="btn" type="submit" disabled={loading || codigo.length !== 6} style={{ width: '100%' }}>
+              {loading ? 'Verificando...' : 'Verificar'}
+            </button>
+            {error && <p className="error-msg">{error}</p>}
+          </form>
+          <button
+            className="btn btn-secondary"
+            onClick={handleCancelarCodigo}
+            style={{ width: '100%', marginTop: 8 }}
+          >
+            Cancelar y volver
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
