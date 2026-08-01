@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 export default function Login() {
@@ -6,11 +6,36 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [revisandoSesion, setRevisandoSesion] = useState(true)
 
   // Paso 2: verificación TOTP (solo aparece si la cuenta tiene 2FA activado)
   const [pidiendoCodigo, setPidiendoCodigo] = useState(false)
   const [codigo, setCodigo] = useState('')
   const [factorId, setFactorId] = useState(null)
+
+  // Si ya existe una sesión (nivel 1) que necesita el segundo factor —por
+  // ejemplo, App.jsx nos devolvió aquí porque la sesión no alcanzó aal2—
+  // saltamos directo a pedir el código, sin volver a pedir la contraseña.
+  useEffect(() => {
+    async function revisarSesionExistente() {
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        setRevisandoSesion(false)
+        return
+      }
+      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+      if (aalData && aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
+        const { data: factorsData } = await supabase.auth.mfa.listFactors()
+        const totp = (factorsData?.totp || []).find((f) => f.status === 'verified')
+        if (totp) {
+          setFactorId(totp.id)
+          setPidiendoCodigo(true)
+        }
+      }
+      setRevisandoSesion(false)
+    }
+    revisarSesionExistente()
+  }, [])
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -33,7 +58,6 @@ export default function Login() {
     }
 
     if (aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
-      // Tiene 2FA activo: buscamos el factor TOTP verificado para retarlo
       const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors()
       if (factorsError) {
         setError('No se pudo cargar el segundo factor de esta cuenta.')
@@ -52,7 +76,7 @@ export default function Login() {
       return
     }
 
-    // Sin 2FA: el login ya quedó completo (App.jsx detecta la sesión solo)
+    // Sin 2FA: el login ya quedó completo (App.jsx detecta la sesión sola)
     setLoading(false)
   }
 
@@ -81,7 +105,9 @@ export default function Login() {
       return
     }
 
-    // Verificado: la sesión sube a aal2 y App.jsx detecta el cambio automáticamente
+    // Verificado: forzamos una recarga completa para que App.jsx vuelva a
+    // evaluar la sesión desde cero y confirme que ya alcanzó aal2.
+    window.location.reload()
   }
 
   async function handleCancelarCodigo() {
@@ -90,6 +116,10 @@ export default function Login() {
     setCodigo('')
     setFactorId(null)
     setError('')
+  }
+
+  if (revisandoSesion) {
+    return <div className="container">Cargando...</div>
   }
 
   if (pidiendoCodigo) {
