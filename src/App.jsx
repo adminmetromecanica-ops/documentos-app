@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import OTDetail from './pages/OTDetail'
 import Portal from './pages/Portal'
 import AdminHerramientas from './pages/AdminHerramientas'
+import Buscador from './pages/Buscador'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -41,7 +42,6 @@ export default function App() {
       setCheckingAal(true)
       const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
       if (error) {
-        // Si no se puede determinar, no bloqueamos el acceso por un error de red.
         setAalOk(true)
         setCheckingAal(false)
         return
@@ -84,6 +84,7 @@ export default function App() {
         <Route path="/ots" element={<Dashboard profile={profile} onLogout={handleLogout} />} />
         <Route path="/ot/:otNumber" element={<OTDetail profile={profile} />} />
         <Route path="/admin/herramientas" element={<AdminHerramientas profile={profile} onLogout={handleLogout} />} />
+        <Route path="/buscar" element={<Buscador profile={profile} onLogout={handleLogout} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>
