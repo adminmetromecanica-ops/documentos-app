@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabaseClient'
 import { AREAS_CONFIG, TODAS_LAS_AREAS } from '../lib/areasConfig'
 import UploadForm from '../components/UploadForm'
 
+const WEBHOOK_URL_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/url-documento"
+
 // Visibilidad cruzada de solo lectura (igual que las políticas de MinIO/RLS)
 const VISIBILIDAD_CRUZADA = {
   laboratorio: ['logistica'],
@@ -33,6 +35,7 @@ export default function OTDetail({ profile }) {
   const [service, setService] = useState(null)
   const [documentos, setDocumentos] = useState([])
   const [activeArea, setActiveArea] = useState(profile.area === 'gerencia' ? 'laboratorio' : profile.area)
+  const [abriendoId, setAbriendoId] = useState(null)
 
   const esGerencia = profile.area === 'gerencia'
 
@@ -84,11 +87,39 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
   }
 
+  // Pide a n8n una URL firmada temporal de MinIO y abre el archivo en pestaña nueva.
+  // El bucket es privado — nunca se expone una URL directa y permanente.
+  async function verDocumento(doc) {
+    if (!doc.ruta_minio) {
+      alert('Este documento no tiene una ruta válida en MinIO.')
+      return
+    }
+    setAbriendoId(doc.id)
+    try {
+      const resp = await fetch(WEBHOOK_URL_DOCUMENTO, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ruta_minio: doc.ruta_minio }),
+      })
+      const data = await resp.json()
+      if (data?.url) {
+        registrarAuditoria(profile.id, 'ver_documento', otNumber, doc.nombre_archivo)
+        window.open(data.url, '_blank', 'noopener,noreferrer')
+      } else {
+        alert('No se pudo generar el enlace del documento. Intenta de nuevo.')
+      }
+    } catch (e) {
+      console.error('Error obteniendo URL del documento:', e)
+      alert('Error al abrir el documento. Revisa tu conexión e intenta de nuevo.')
+    }
+    setAbriendoId(null)
+  }
+
   const configArea = AREAS_CONFIG[activeArea]
 
   return (
     <div className="container">
-      <a className="link-back" onClick={() => navigate('/')}>&larr; Volver a la lista</a>
+      <a className="link-back" onClick={() => navigate(-1)}>&larr; Volver a la lista</a>
 
       <div className="top-bar" style={{ marginTop: 16 }}>
         <div>
@@ -134,11 +165,19 @@ export default function OTDetail({ profile }) {
         <h4 style={{ marginTop: 0 }}>Documentos subidos</h4>
         {documentos.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Aún no hay documentos en esta área.</p>}
         {documentos.map((d) => (
-          <div key={d.id} className="doc-item">
-            <span>{d.nombre_archivo}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+          <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>
               {new Date(d.created_at).toLocaleDateString('es-PE')}
             </span>
+            <button
+              className="btn btn-secondary"
+              style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
+              disabled={abriendoId === d.id}
+              onClick={() => verDocumento(d)}
+            >
+              {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
+            </button>
           </div>
         ))}
       </div>
