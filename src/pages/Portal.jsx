@@ -94,29 +94,53 @@ function LiveClock() {
   )
 }
 
-// ─── GAUGE — instrumento circular con aguja y glow latente ──────────────────
-function Gauge({ label, value, max, color, unit = '' }) {
+// ─── GAUGE — anillo delgado con glow, gradiente y mini-tendencia (estilo Grafana "New!") ──
+function Gauge({ label, value, max, color, history = [] }) {
   const pct = max > 0 ? Math.min(value / max, 1) : 0
-  const angle = -120 + pct * 240 // arco de 240°, de -120° a +120°
-  const R = 42
-  const circumference = 2 * Math.PI * R * (240 / 360)
+  const R = 46
+  const circumference = 2 * Math.PI * R * (270 / 360)
   const dash = circumference * pct
+  const gid = `grad-${label.replace(/\s/g, '')}`
+
+  // mini-tendencia (sparkline) con las últimas lecturas acumuladas en esta sesión
+  const spark = useMemo(() => {
+    if (history.length < 2) return ''
+    const w = 70, h = 20
+    const vals = history.slice(-16)
+    const max2 = Math.max(...vals, 1)
+    const min2 = Math.min(...vals, 0)
+    const range = max2 - min2 || 1
+    return vals.map((v, i) => {
+      const x = (i / (vals.length - 1)) * w
+      const y = h - ((v - min2) / range) * h
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+    }).join(' ')
+  }, [history])
 
   return (
     <div className="gauge">
-      <svg width="120" height="120" viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r={R} fill="none" stroke="#182430" strokeWidth="8" strokeDasharray={`${circumference} 999`} strokeDashoffset={0} transform="rotate(150 60 60)" strokeLinecap="round" />
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <defs>
+          <linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={color} stopOpacity="0.5" />
+            <stop offset="100%" stopColor={color} stopOpacity="1" />
+          </linearGradient>
+        </defs>
+        <circle cx="65" cy="65" r={R} fill="none" stroke="#182430" strokeWidth="5" strokeDasharray={`${circumference} 999`} transform="rotate(135 65 65)" strokeLinecap="round" />
         <circle
-          cx="60" cy="60" r={R} fill="none" stroke={color} strokeWidth="8"
-          strokeDasharray={`${dash} 999`} transform="rotate(150 60 60)" strokeLinecap="round"
-          className="gauge-arc" style={{ filter: `drop-shadow(0 0 6px ${color}90)` }}
+          cx="65" cy="65" r={R} fill="none" stroke={`url(#${gid})`} strokeWidth="5"
+          strokeDasharray={`${dash} 999`} transform="rotate(135 65 65)" strokeLinecap="round"
+          className="gauge-arc" style={{ filter: `drop-shadow(0 0 8px ${color}80)` }}
         />
-        <g transform={`rotate(${angle} 60 60)`} className="gauge-needle">
-          <line x1="60" y1="60" x2="60" y2="26" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-          <circle cx="60" cy="60" r="4" fill={color} />
-        </g>
       </svg>
-      <div className="gauge-value" style={{ color }}>{value}{unit}</div>
+      <div className="gauge-center">
+        <div className="gauge-value" style={{ color }}>{value}</div>
+        {spark && (
+          <svg className="gauge-spark" width="70" height="20" viewBox="0 0 70 20" preserveAspectRatio="none">
+            <path d={spark} fill="none" stroke={color} strokeWidth="1.5" opacity="0.85" />
+          </svg>
+        )}
+      </div>
       <div className="gauge-label">{label}</div>
     </div>
   )
@@ -216,19 +240,27 @@ const CSS = () => (
       letter-spacing: 2px; text-transform: uppercase; position: absolute; top: 10px; left: 20px;
     }
 
-    .gauge { display: flex; flex-direction: column; align-items: center; padding-top: 14px; }
-    .gauge-arc { transition: stroke-dasharray 1s ease-out; }
-    .gauge-needle {
-      transform-origin: 60px 60px; transition: transform 1.2s cubic-bezier(.34,1.56,.64,1);
-      filter: drop-shadow(0 0 4px currentColor);
+    .gauge { display: flex; flex-direction: column; align-items: center; padding-top: 4px; position: relative; }
+    .gauge-arc {
+      transition: stroke-dasharray 1.1s cubic-bezier(.34,1.2,.64,1);
+      animation: gauge-breathe 3.2s ease-in-out infinite;
+    }
+    @keyframes gauge-breathe {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.35); }
+    }
+    .gauge-center {
+      position: absolute; top: 0; left: 0; width: 130px; height: 130px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
     }
     .gauge-value {
-      font-family: 'Orbitron', sans-serif; font-size: 26px; font-weight: 800;
-      margin-top: -6px; line-height: 1;
+      font-family: 'Orbitron', sans-serif; font-size: 27px; font-weight: 800; line-height: 1;
+      text-shadow: 0 0 14px currentColor;
     }
+    .gauge-spark { opacity: 0.9; }
     .gauge-label {
       font-family: 'DM Mono', monospace; font-size: 9px; color: var(--text-dim);
-      letter-spacing: 1.5px; text-transform: uppercase; margin-top: 4px; text-align: center;
+      letter-spacing: 1.5px; text-transform: uppercase; margin-top: 6px; text-align: center;
     }
 
     /* ── Grid de herramientas ── */
@@ -294,6 +326,7 @@ export default function Portal({ profile, onLogout }) {
   const [herramientas, setHerramientas] = useState([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({ otsActivas: 0, docsHoy: 0, otsConcluidasMes: 0 })
+  const [history, setHistory] = useState({ otsActivas: [], docsHoy: [], otsConcluidasMes: [] })
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') return 'dark'
     return window.localStorage.getItem(THEME_KEY) || 'dark'
@@ -325,11 +358,17 @@ export default function Portal({ profile, onLogout }) {
         supabase.from('documentos').select('*', { count: 'exact', head: true }).gte('created_at', hoyISO),
         supabase.from('services').select('*', { count: 'exact', head: true }).eq('status', 'concluido').gte('updated_at', inicioMes.toISOString()),
       ])
-      setStats({
+      const nuevo = {
         otsActivas: otsActivas.count ?? 0,
         docsHoy: docsHoy.count ?? 0,
         otsConcluidasMes: otsConcluidasMes.count ?? 0,
-      })
+      }
+      setStats(nuevo)
+      setHistory((prev) => ({
+        otsActivas: [...prev.otsActivas, nuevo.otsActivas].slice(-16),
+        docsHoy: [...prev.docsHoy, nuevo.docsHoy].slice(-16),
+        otsConcluidasMes: [...prev.otsConcluidasMes, nuevo.otsConcluidasMes].slice(-16),
+      }))
     }
     cargarStats()
     const t = setInterval(cargarStats, 60000)
@@ -378,9 +417,9 @@ export default function Portal({ profile, onLogout }) {
 
         <div className="console">
           <div className="console-label">Panel de control · en vivo</div>
-          <Gauge label="OTs activas" value={stats.otsActivas} max={Math.max(stats.otsActivas * 1.4, 10)} color="#ff3b4e" />
-          <Gauge label="Docs. subidos hoy" value={stats.docsHoy} max={Math.max(stats.docsHoy * 1.4, 15)} color="#00e5b8" />
-          <Gauge label="OTs concluidas (mes)" value={stats.otsConcluidasMes} max={Math.max(stats.otsConcluidasMes * 1.4, 10)} color="#f0a500" />
+          <Gauge label="OTs activas" value={stats.otsActivas} max={Math.max(stats.otsActivas * 1.4, 10)} color="#ff3b4e" history={history.otsActivas} />
+          <Gauge label="Docs. subidos hoy" value={stats.docsHoy} max={Math.max(stats.docsHoy * 1.4, 15)} color="#00e5b8" history={history.docsHoy} />
+          <Gauge label="OTs concluidas (mes)" value={stats.otsConcluidasMes} max={Math.max(stats.otsConcluidasMes * 1.4, 10)} color="#f0a500" history={history.otsConcluidasMes} />
         </div>
 
         {loading && <p style={{ color: 'var(--text-dim)', fontFamily: 'DM Mono, monospace', fontSize: 13 }}>Cargando herramientas...</p>}
