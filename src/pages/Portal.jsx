@@ -1,6 +1,65 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+
+const THEME_KEY = 'metromecanica_theme'
+
+// ─── SONIDO DE SELECCIÓN — sintetizado con Web Audio API, sin archivos externos ──
+// Un "beep" corto de confirmación, como el de un instrumento calibrado al aceptar
+// una lectura — no una notificación genérica de celular.
+function playSelectSound() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    const ctx = new Ctx()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.06)
+    gain.gain.setValueAtTime(0.09, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.14)
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.start(); osc.stop(ctx.currentTime + 0.15)
+  } catch (e) { /* audio no disponible, no romper la navegación por esto */ }
+}
+
+// ─── FONDO DE ONDAS (modo claro) — patrón tipo "chirp" (barrido de frecuencia) ──
+// Recreado en código, no como imagen: un chirp es una señal real usada en pruebas
+// de calibración, así que encaja con el negocio, no es solo decorativo.
+function chirpPath(width, height, offsetY, ampMul, seedPhase) {
+  const points = 220
+  let d = ''
+  for (let i = 0; i <= points; i++) {
+    const t = i / points
+    const x = t * width
+    const amp = ampMul * height * (0.12 + 0.4 * Math.pow(Math.sin(t * Math.PI * 1.15), 2) + 0.55 * Math.pow(t, 2.2))
+    const freq = 3.5 + t * 46
+    const y = offsetY + amp * Math.sin(t * freq + seedPhase)
+    d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' '
+  }
+  return d
+}
+
+function WaveBackground() {
+  const width = 1400, height = 420
+  const lines = useMemo(() => {
+    const arr = []
+    for (let i = 0; i < 13; i++) {
+      arr.push({
+        d: chirpPath(width, height, height * 0.55 + (i - 6) * 9, 0.9, i * 0.35),
+        opacity: 0.06 + (i % 3) * 0.02,
+      })
+    }
+    return arr
+  }, [])
+  return (
+    <svg className="wave-bg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      {lines.map((l, i) => (
+        <path key={i} d={l.d} fill="none" stroke="currentColor" strokeWidth="1.2" opacity={l.opacity} />
+      ))}
+    </svg>
+  )
+}
 
 // ─── LOGO — recreado en SVG (círculo + barras), sin depender de hosting de imagen ──
 function LogoMark({ size = 44 }) {
@@ -57,7 +116,21 @@ const CSS = () => (
       background: var(--bg); color: var(--text);
       min-height: 100vh; font-family: 'Rajdhani', sans-serif;
       position: relative; overflow-x: hidden;
+      transition: background .25s, color .25s;
     }
+    .portal-wrap[data-theme='light'] {
+      --bg: #f6f8fa; --bg2: #ffffff; --bg3: #eef2f5;
+      --border: #dde4e9; --text: #17222c; --text-dim: #5c6d7a;
+      --red: #d81e3a; --teal: #00997a; --gold: #b9790a;
+    }
+    .wave-bg {
+      position: fixed; top: 0; left: 0; width: 100%; height: 340px;
+      color: #17222c; pointer-events: none; z-index: 0; opacity: 0;
+      transition: opacity .3s;
+    }
+    .portal-wrap[data-theme='light'] .wave-bg { opacity: 1; }
+    .portal-wrap[data-theme='light'] .portal-grid-bg,
+    .portal-wrap[data-theme='light'] .portal-glow { opacity: 0; }
     .portal-grid-bg {
       position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background-image:
@@ -162,6 +235,20 @@ const CSS = () => (
     .tool-card:hover::before { opacity: 1; }
     .tool-icon { font-size: 30px; margin-bottom: 10px; filter: drop-shadow(0 0 8px rgba(0,229,184,.15)); }
     .tool-name { font-size: 13px; font-weight: 600; letter-spacing: .3px; }
+    .portal-wrap[data-theme='light'] .tool-card {
+      box-shadow: 0 1px 3px rgba(20,30,40,.06);
+    }
+    .portal-wrap[data-theme='light'] .tool-card:hover {
+      box-shadow: 0 8px 20px rgba(0,153,122,.12);
+    }
+
+    .theme-toggle {
+      width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--text-dim); cursor: pointer;
+      display: flex; align-items: center; justify-content: center; font-size: 15px;
+      transition: all .15s;
+    }
+    .theme-toggle:hover { border-color: var(--teal); color: var(--teal); }
 
     @media (prefers-reduced-motion: reduce) {
       .portal-area-dot, .gauge-needle, .gauge-arc { animation: none !important; transition: none !important; }
@@ -177,8 +264,18 @@ export default function Portal({ profile, onLogout }) {
   const [herramientas, setHerramientas] = useState([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({ otsActivas: 0, docsHoy: 0, otsConcluidasMes: 0 })
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'dark'
+    return window.localStorage.getItem(THEME_KEY) || 'dark'
+  })
   const navigate = useNavigate()
   const esGerencia = profile?.area === 'gerencia'
+
+  function toggleTheme() {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    window.localStorage.setItem(THEME_KEY, next)
+  }
 
   useEffect(() => {
     async function cargar() {
@@ -210,13 +307,15 @@ export default function Portal({ profile, onLogout }) {
   }, [])
 
   function abrir(url) {
+    playSelectSound()
     if (url.startsWith('/')) navigate(url)
     else window.open(url, '_blank', 'noopener')
   }
 
   return (
-    <div className="portal-wrap">
+    <div className="portal-wrap" data-theme={theme}>
       <CSS />
+      <WaveBackground />
       <div className="portal-grid-bg" />
       <div className="portal-glow" />
       <div className="portal-inner">
@@ -234,6 +333,9 @@ export default function Portal({ profile, onLogout }) {
             </div>
           </div>
           <div className="portal-actions">
+            <button className="theme-toggle" onClick={toggleTheme} title="Cambiar tema">
+              {theme === 'dark' ? '☀' : '☾'}
+            </button>
             {esGerencia && (
               <button className="portal-btn" onClick={() => navigate('/admin/herramientas')}>
                 Administrar herramientas
