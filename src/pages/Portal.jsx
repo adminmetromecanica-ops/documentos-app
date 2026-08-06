@@ -3,23 +3,30 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
 const THEME_KEY = 'metromecanica_theme'
+const LOGO_URL = 'https://ndcjjksaiecsuzperrhp.supabase.co/storage/v1/object/public/ot-files/logo.png'
 
-// ─── SONIDO DE SELECCIÓN — sintetizado con Web Audio API, sin archivos externos ──
-// Un "beep" corto de confirmación, como el de un instrumento calibrado al aceptar
-// una lectura — no una notificación genérica de celular.
+// ─── SONIDO DE SELECCIÓN — un solo AudioContext reutilizado, activado con .resume() ──
+let _audioCtx = null
+function getAudioCtx() {
+  if (!_audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    _audioCtx = new Ctx()
+  }
+  return _audioCtx
+}
 function playSelectSound() {
   try {
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    const ctx = new Ctx()
+    const ctx = getAudioCtx()
+    if (ctx.state === 'suspended') ctx.resume()
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
     osc.type = 'sine'
     osc.frequency.setValueAtTime(880, ctx.currentTime)
     osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.06)
-    gain.gain.setValueAtTime(0.09, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.14)
+    gain.gain.setValueAtTime(0.16, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16)
     osc.connect(gain); gain.connect(ctx.destination)
-    osc.start(); osc.stop(ctx.currentTime + 0.15)
+    osc.start(); osc.stop(ctx.currentTime + 0.17)
   } catch (e) { /* audio no disponible, no romper la navegación por esto */ }
 }
 
@@ -61,19 +68,29 @@ function WaveBackground() {
   )
 }
 
-// ─── LOGO — recreado en SVG (círculo + barras), sin depender de hosting de imagen ──
+// ─── LOGO — imagen real subida a Supabase Storage (bucket ot-files) ──────────
 function LogoMark({ size = 44 }) {
-  const bars = [10, 22, 32, 40, 32, 22, 10]
+  return <img src={LOGO_URL} alt="MetroMecánica" style={{ width: size, height: size, objectFit: 'contain' }} />
+}
+
+// ─── RELOJ Y FECHA EN VIVO ────────────────────────────────────────────────────
+const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
+const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+function LiveClock() {
+  const [now, setNow] = useState(new Date())
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const pad = (n) => String(n).padStart(2, '0')
+  const hora = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+  const fecha = `${DIAS[now.getDay()]} ${now.getDate()} ${MESES[now.getMonth()]} ${now.getFullYear()}`
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100">
-      <circle cx="50" cy="50" r="48" fill="#c81e3a" />
-      <g clipPath="url(#clip)">
-        <clipPath id="clip"><circle cx="50" cy="50" r="48" /></clipPath>
-        {bars.map((h, i) => (
-          <rect key={i} x={16 + i * 10} y={50 - h / 2} width="6" height={h} fill="#fff" opacity="0.95" />
-        ))}
-      </g>
-    </svg>
+    <div className="live-clock">
+      <div className="live-clock-time">{hora}</div>
+      <div className="live-clock-date">{fecha}</div>
+    </div>
   )
 }
 
@@ -171,7 +188,7 @@ const CSS = () => (
     }
     @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
-    .portal-actions { display: flex; gap: 8px; }
+    .portal-actions { display: flex; gap: 14px; align-items: center; }
     .portal-btn {
       font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 500;
       letter-spacing: .5px; padding: 9px 16px; border-radius: 8px; cursor: pointer;
@@ -249,6 +266,19 @@ const CSS = () => (
       transition: all .15s;
     }
     .theme-toggle:hover { border-color: var(--teal); color: var(--teal); }
+
+    .live-clock {
+      text-align: right; font-family: 'Orbitron', sans-serif; line-height: 1;
+      padding-right: 4px;
+    }
+    .live-clock-time {
+      font-size: 20px; font-weight: 700; color: var(--teal); letter-spacing: 1px;
+      text-shadow: 0 0 12px rgba(0,229,184,.3);
+    }
+    .live-clock-date {
+      font-family: 'DM Mono', monospace; font-size: 9px; color: var(--text-dim);
+      letter-spacing: 1px; text-transform: uppercase; margin-top: 3px;
+    }
 
     @media (prefers-reduced-motion: reduce) {
       .portal-area-dot, .gauge-needle, .gauge-arc { animation: none !important; transition: none !important; }
@@ -333,6 +363,7 @@ export default function Portal({ profile, onLogout }) {
             </div>
           </div>
           <div className="portal-actions">
+            <LiveClock />
             <button className="theme-toggle" onClick={toggleTheme} title="Cambiar tema">
               {theme === 'dark' ? '☀' : '☾'}
             </button>
