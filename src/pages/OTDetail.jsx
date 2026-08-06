@@ -87,8 +87,11 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
   }
 
-  // Pide a n8n una URL firmada temporal de MinIO y abre el archivo en pestaña nueva.
+  // Pide a n8n una URL firmada temporal de MinIO y abre el archivo.
   // El bucket es privado — nunca se expone una URL directa y permanente.
+  // PDFs e imágenes se abren directo (el navegador los muestra inline).
+  // Word/Excel/PowerPoint se abren con el visor de Office Online, igual que en MetroTrack,
+  // para previsualizar sin forzar una descarga — más parecido a la experiencia de Google Drive.
   async function verDocumento(doc) {
     if (!doc.ruta_minio) {
       alert('Este documento no tiene una ruta válida en MinIO.')
@@ -104,7 +107,12 @@ export default function OTDetail({ profile }) {
       const data = await resp.json()
       if (data?.url) {
         registrarAuditoria(profile.id, 'ver_documento', otNumber, doc.nombre_archivo)
-        window.open(data.url, '_blank', 'noopener,noreferrer')
+        const ext = (doc.nombre_archivo || '').split('.').pop().toLowerCase()
+        const esOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)
+        const urlFinal = esOffice
+          ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(data.url)}`
+          : data.url
+        window.open(urlFinal, '_blank', 'noopener,noreferrer')
       } else {
         alert('No se pudo generar el enlace del documento. Intenta de nuevo.')
       }
