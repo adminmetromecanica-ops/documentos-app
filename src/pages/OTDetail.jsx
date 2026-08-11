@@ -74,7 +74,21 @@ export default function OTDetail({ profile }) {
       .eq('ot_number', otNumber)
       .eq('area', activeArea)
       .order('created_at', { ascending: false })
-    setDocumentos(data || [])
+
+    const docs = data || []
+
+    // Cruzar subido_por (UUID) con profiles.full_name — sin depender de FK en Supabase
+    const ids = [...new Set(docs.map((d) => d.subido_por).filter(Boolean))]
+    let nombresPorId = {}
+    if (ids.length > 0) {
+      const { data: perfiles } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', ids)
+      nombresPorId = Object.fromEntries((perfiles || []).map((p) => [p.id, p.full_name]))
+    }
+
+    setDocumentos(docs.map((d) => ({ ...d, _subido_por_nombre: nombresPorId[d.subido_por] || null })))
   }
 
   useEffect(() => {
@@ -174,10 +188,14 @@ export default function OTDetail({ profile }) {
         {documentos.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Aún no hay documentos en esta área.</p>}
         {documentos.map((d) => (
           <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>
-              {new Date(d.created_at).toLocaleDateString('es-PE')}
-            </span>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
+                {' · '}
+                {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </div>
             <button
               className="btn btn-secondary"
               style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
