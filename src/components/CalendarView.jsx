@@ -118,12 +118,16 @@ export default function CalendarView({ services }) {
                         background: colorPrioridad(s.priority) + '22',
                         color: colorPrioridad(s.priority),
                         cursor: 'pointer',
-                        whiteSpace: 'nowrap',
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis',
+                        lineHeight: 1.2,
                       }}
                     >
-                      {s.ot_number}
+                      <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                        {s.ot_number}
+                      </div>
+                      <div style={{ fontSize: 9, opacity: 0.85, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                        {s.client}
+                      </div>
                     </div>
                   ))}
                   {items.length > 3 && (
