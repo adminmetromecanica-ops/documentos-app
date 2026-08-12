@@ -28,7 +28,7 @@ body {
 }
 
 .container-ancho {
-  max-width: 1600px;
+  max-width: 100%;
 }
 
 .card {
@@ -119,10 +119,4 @@ label { font-size: 13px; color: var(--text-muted); display: block; margin-bottom
   cursor: pointer;
   font-size: 14px;
   text-decoration: none;
-}
-
-@media (max-width: 1024px) {
-  .container-ancho .card [style*="grid-template-columns: repeat(7"] {
-    font-size: 11px;
-  }
 }
