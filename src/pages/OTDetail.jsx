@@ -29,6 +29,45 @@ async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
   }
 }
 
+// Modal embebido: muestra el documento sin salir de la app, con Office Online
+// para Word/Excel/PowerPoint, o directo (iframe/img) para PDF e imágenes.
+function VisorDocumento({ titulo, url, extension, onClose }) {
+  const esOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes((extension || '').toLowerCase())
+  const src = esOffice
+    ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`
+    : url
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--panel-bg, #0f172a)', borderRadius: 12, width: '100%', maxWidth: 1100,
+          height: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          border: '1px solid var(--border)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+          <strong style={{ fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titulo}</strong>
+          <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+        </div>
+        <iframe
+          src={src}
+          title={titulo}
+          style={{ flex: 1, width: '100%', border: 'none', background: '#fff' }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function OTDetail({ profile }) {
   const { otNumber } = useParams()
   const navigate = useNavigate()
@@ -36,6 +75,7 @@ export default function OTDetail({ profile }) {
   const [documentos, setDocumentos] = useState([])
   const [activeArea, setActiveArea] = useState(profile.area === 'gerencia' ? 'laboratorio' : profile.area)
   const [abriendoId, setAbriendoId] = useState(null)
+  const [visor, setVisor] = useState(null) // { titulo, url, extension } | null
 
   const esGerencia = profile.area === 'gerencia'
 
@@ -101,11 +141,8 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
   }
 
-  // Pide a n8n una URL firmada temporal de MinIO y abre el archivo.
+  // Pide a n8n una URL firmada temporal de MinIO y abre el documento en el visor embebido.
   // El bucket es privado — nunca se expone una URL directa y permanente.
-  // PDFs e imágenes se abren directo (el navegador los muestra inline).
-  // Word/Excel/PowerPoint se abren con el visor de Office Online, igual que en MetroTrack,
-  // para previsualizar sin forzar una descarga — más parecido a la experiencia de Google Drive.
   async function verDocumento(doc) {
     if (!doc.ruta_minio) {
       alert('Este documento no tiene una ruta válida en MinIO.')
@@ -122,11 +159,7 @@ export default function OTDetail({ profile }) {
       if (data?.url) {
         registrarAuditoria(profile.id, 'ver_documento', otNumber, doc.nombre_archivo)
         const ext = (doc.nombre_archivo || '').split('.').pop().toLowerCase()
-        const esOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)
-        const urlFinal = esOffice
-          ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(data.url)}`
-          : data.url
-        window.open(urlFinal, '_blank', 'noopener,noreferrer')
+        setVisor({ titulo: doc.nombre_archivo, url: data.url, extension: ext })
       } else {
         alert('No se pudo generar el enlace del documento. Intenta de nuevo.')
       }
@@ -143,8 +176,7 @@ export default function OTDetail({ profile }) {
   function verDocumentoOT() {
     if (!service?.ot_file_url) return
     registrarAuditoria(profile.id, 'ver_documento_ot', otNumber, 'Word original de la OT')
-    const urlFinal = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(service.ot_file_url)}`
-    window.open(urlFinal, '_blank', 'noopener,noreferrer')
+    setVisor({ titulo: `${otNumber} — Documento original`, url: service.ot_file_url, extension: 'docx' })
   }
 
   const configArea = AREAS_CONFIG[activeArea]
@@ -227,6 +259,15 @@ export default function OTDetail({ profile }) {
           </div>
         ))}
       </div>
+
+      {visor && (
+        <VisorDocumento
+          titulo={visor.titulo}
+          url={visor.url}
+          extension={visor.extension}
+          onClose={() => setVisor(null)}
+        />
+      )}
     </div>
   )
 }
