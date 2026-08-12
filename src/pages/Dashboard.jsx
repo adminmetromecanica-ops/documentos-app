@@ -21,7 +21,7 @@ export default function Dashboard({ profile, onLogout }) {
   const [search, setSearch] = useState('')
   const [colapsados, setColapsados] = useState({})
   const [soloPendientes, setSoloPendientes] = useState(false)
-  const [vista, setVista] = useState('lista')
+  const [vista, setVista] = useState('calendario')
   const navigate = useNavigate()
 
   const esGerencia = profile?.area === 'gerencia'
@@ -100,7 +100,7 @@ export default function Dashboard({ profile, onLogout }) {
   }
 
   return (
-    <div className="container">
+    <div className={vista === 'calendario' ? 'container container-ancho' : 'container'}>
       <div className="top-bar">
         <div>
           <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al portal</a>
