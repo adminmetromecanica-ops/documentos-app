@@ -137,6 +137,16 @@ export default function OTDetail({ profile }) {
     setAbriendoId(null)
   }
 
+  // El Word original de la OT (adjuntado en MetroTrack) es el documento "madre":
+  // todas las áreas trabajan a partir de él, así que se muestra sin restricción
+  // de visibilidad cruzada — a diferencia de los documentos internos por área.
+  function verDocumentoOT() {
+    if (!service?.ot_file_url) return
+    registrarAuditoria(profile.id, 'ver_documento_ot', otNumber, 'Word original de la OT')
+    const urlFinal = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(service.ot_file_url)}`
+    window.open(urlFinal, '_blank', 'noopener,noreferrer')
+  }
+
   const configArea = AREAS_CONFIG[activeArea]
 
   return (
@@ -144,12 +154,22 @@ export default function OTDetail({ profile }) {
       <a className="link-back" onClick={() => navigate(-1)}>&larr; Volver a la lista</a>
 
       <div className="top-bar" style={{ marginTop: 16 }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <h2 style={{ margin: 0 }}>{otNumber}</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14, margin: '4px 0 0' }}>
-            {service?.client || 'Cargando...'} — {service?.status}
-          </p>
+          {service?.ot_file_url && (
+            <button
+              className="btn btn-secondary"
+              title="Ver documento Word original de la OT (visible para todas las áreas)"
+              onClick={verDocumentoOT}
+              style={{ padding: '4px 10px', fontSize: 13 }}
+            >
+              👁 Ver OT
+            </button>
+          )}
         </div>
+        <p style={{ color: 'var(--text-muted)', fontSize: 14, margin: '4px 0 0' }}>
+          {service?.client || 'Cargando...'} — {service?.status}
+        </p>
       </div>
 
       {areasVisibles.length > 1 && (
