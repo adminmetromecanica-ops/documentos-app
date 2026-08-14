@@ -30,6 +30,22 @@ function playSelectSound() {
   } catch (e) { /* audio no disponible, no romper la navegación por esto */ }
 }
 
+// ─── SONIDO DE HOVER — "tick" corto y discreto, distinto al de selección ──────
+function playHoverSound() {
+  try {
+    const ctx = getAudioCtx()
+    if (ctx.state === 'suspended') ctx.resume()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(1450, ctx.currentTime)
+    gain.gain.setValueAtTime(0.05, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05)
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.start(); osc.stop(ctx.currentTime + 0.06)
+  } catch (e) { /* audio no disponible, no interrumpir la interacción por esto */ }
+}
+
 // ─── FONDO DE ONDAS (modo claro) — patrón tipo "chirp" (barrido de frecuencia) ──
 // Recreado en código, no como imagen: un chirp es una señal real usada en pruebas
 // de calibración, así que encaja con el negocio, no es solo decorativo.
@@ -375,10 +391,33 @@ export default function Portal({ profile, onLogout }) {
     return () => clearInterval(t)
   }, [])
 
+  // Abre la herramienta como ventana tipo "app" (sin barra de pestañas/direcciones,
+  // en la medida que el navegador lo permite vía window.open). Las rutas internas
+  // (que empiezan con "/") siguen navegando dentro de la misma app con React Router.
   function abrir(url) {
     playSelectSound()
-    if (url.startsWith('/')) navigate(url)
-    else window.open(url, '_blank', 'noopener')
+    if (url.startsWith('/')) {
+      navigate(url)
+      return
+    }
+    const w = 1280, h = 800
+    const left = (window.screen.width - w) / 2
+    const top = (window.screen.height - h) / 2
+    const features = [
+      'popup=yes',
+      'noopener',
+      `width=${w}`,
+      `height=${h}`,
+      `left=${left}`,
+      `top=${top}`,
+      'menubar=no',
+      'toolbar=no',
+      'location=no',
+      'status=no',
+      'resizable=yes',
+      'scrollbars=yes',
+    ].join(',')
+    window.open(url, '_blank', features)
   }
 
   return (
@@ -427,7 +466,12 @@ export default function Portal({ profile, onLogout }) {
         {!loading && (
           <div className="tools-grid">
             {herramientas.map((h) => (
-              <div key={h.id} className="tool-card" onClick={() => abrir(h.url)}>
+              <div
+                key={h.id}
+                className="tool-card"
+                onClick={() => abrir(h.url)}
+                onMouseEnter={playHoverSound}
+              >
                 <div className="tool-icon">{h.icono}</div>
                 <div className="tool-name">{h.nombre}</div>
               </div>
