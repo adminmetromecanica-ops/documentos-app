@@ -4,19 +4,14 @@ const N8N_UPLOAD_URL = import.meta.env.VITE_N8N_UPLOAD_WEBHOOK_URL
 
 export default function UploadForm({ otNumber, area, tipos, userId, onUploaded }) {
   const [tipo, setTipo] = useState(tipos[0]?.value || '')
-  const [file, setFile] = useState(null)
+  const [files, setFiles] = useState([])
   const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [message, setMessage] = useState(null)
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!file) return
-    setUploading(true)
-    setMessage(null)
-
-    const tipoInfo = tipos.find((t) => t.value === tipo)
+  async function uploadOne(file, tipoInfo) {
     const extension = file.name.split('.').pop()
-    const nombreArchivo = `${tipo}_${Date.now()}.${extension}`
+    const nombreArchivo = `${tipo}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${extension}`
 
     const formData = new FormData()
     formData.append('file', file, nombreArchivo)
@@ -27,17 +22,45 @@ export default function UploadForm({ otNumber, area, tipos, userId, onUploaded }
     formData.append('nombre_archivo', nombreArchivo)
     formData.append('subido_por', userId)
 
-    try {
-      const res = await fetch(N8N_UPLOAD_URL, { method: 'POST', body: formData })
-      if (!res.ok) throw new Error('Error al subir')
-      setMessage({ type: 'success', text: 'Documento subido correctamente.' })
-      setFile(null)
-      onUploaded?.()
-    } catch (err) {
-      setMessage({ type: 'error', text: 'No se pudo subir el documento. Intenta de nuevo.' })
-    } finally {
-      setUploading(false)
+    const res = await fetch(N8N_UPLOAD_URL, { method: 'POST', body: formData })
+    if (!res.ok) throw new Error('Error al subir')
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!files.length) return
+    setUploading(true)
+    setMessage(null)
+
+    const tipoInfo = tipos.find((t) => t.value === tipo)
+    let successCount = 0
+    let failCount = 0
+
+    for (let i = 0; i < files.length; i++) {
+      setProgress({ current: i + 1, total: files.length })
+      try {
+        await uploadOne(files[i], tipoInfo)
+        successCount++
+      } catch (err) {
+        failCount++
+      }
     }
+
+    if (failCount === 0) {
+      setMessage({ type: 'success', text: `${successCount} documento(s) subido(s) correctamente.` })
+    } else if (successCount === 0) {
+      setMessage({ type: 'error', text: 'No se pudo subir ningún documento. Intenta de nuevo.' })
+    } else {
+      setMessage({
+        type: 'error',
+        text: `${successCount} subido(s), ${failCount} fallaron. Intenta de nuevo con los que fallaron.`,
+      })
+    }
+
+    setFiles([])
+    setUploading(false)
+    setProgress({ current: 0, total: 0 })
+    onUploaded?.()
   }
 
   return (
@@ -50,10 +73,22 @@ export default function UploadForm({ otNumber, area, tipos, userId, onUploaded }
       </select>
 
       <label>Archivo</label>
-      <input type="file" onChange={(e) => setFile(e.target.files[0])} required />
+      <input
+        type="file"
+        multiple
+        onChange={(e) => setFiles(Array.from(e.target.files))}
+        required
+      />
+      {files.length > 0 && (
+        <p style={{ fontSize: '0.85rem', opacity: 0.8 }}>
+          {files.length} archivo(s) seleccionado(s)
+        </p>
+      )}
 
-      <button className="btn" type="submit" disabled={uploading}>
-        {uploading ? 'Subiendo...' : 'Subir documento'}
+      <button className="btn" type="submit" disabled={uploading || files.length === 0}>
+        {uploading
+          ? `Subiendo ${progress.current}/${progress.total}...`
+          : 'Subir documento(s)'}
       </button>
 
       {message && (
