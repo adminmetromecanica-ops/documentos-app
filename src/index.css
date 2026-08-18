@@ -120,3 +120,60 @@ label { font-size: 13px; color: var(--text-muted); display: block; margin-bottom
   font-size: 14px;
   text-decoration: none;
 }
+
+/* --- Dropzone (drag & drop de archivos) --- */
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 2rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+  margin-bottom: 12px;
+}
+
+.dropzone-dragging {
+  border-color: var(--ocean-accent);
+  background-color: rgba(45, 212, 191, 0.08);
+}
+
+.dropzone-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.dropzone-file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dropzone-file-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--text-light);
+}
+
+.dropzone-remove-btn {
+  background: none;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.dropzone-remove-btn:hover {
+  opacity: 0.75;
+}
