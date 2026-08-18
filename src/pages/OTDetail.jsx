@@ -68,6 +68,32 @@ function VisorDocumento({ titulo, url, extension, onClose }) {
   )
 }
 
+// Pastilla roja con el número de notificaciones no leídas. No se renderiza si count es 0.
+function BadgeNoLeidos({ count }) {
+  if (!count) return null
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 18,
+        height: 18,
+        padding: '0 5px',
+        marginLeft: 6,
+        borderRadius: 999,
+        background: 'var(--danger, #f87171)',
+        color: '#1a0505',
+        fontSize: 11,
+        fontWeight: 700,
+        lineHeight: 1,
+      }}
+    >
+      {count > 9 ? '9+' : count}
+    </span>
+  )
+}
+
 export default function OTDetail({ profile }) {
   const { otNumber } = useParams()
   const navigate = useNavigate()
@@ -76,6 +102,7 @@ export default function OTDetail({ profile }) {
   const [activeArea, setActiveArea] = useState(profile.area === 'gerencia' ? 'laboratorio' : profile.area)
   const [abriendoId, setAbriendoId] = useState(null)
   const [visor, setVisor] = useState(null) // { titulo, url, extension } | null
+  const [noLeidosPorArea, setNoLeidosPorArea] = useState({}) // { laboratorio: 2, comercial: 0, ... }
 
   const esGerencia = profile.area === 'gerencia'
 
@@ -133,6 +160,72 @@ export default function OTDetail({ profile }) {
 
   useEffect(() => {
     loadDocumentos()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeArea, otNumber])
+
+  // Cuenta notificaciones no leídas por área, solo para las áreas visibles de este usuario
+  async function loadNoLeidos() {
+    if (!otNumber || areasVisibles.length === 0) return
+    const { data, error } = await supabase
+      .from('notificaciones')
+      .select('area')
+      .eq('ot_number', otNumber)
+      .eq('leido', false)
+      .in('area', areasVisibles)
+
+    if (error) {
+      console.error('No se pudo cargar notificaciones:', error)
+      return
+    }
+
+    const conteo = {}
+    for (const row of data || []) {
+      conteo[row.area] = (conteo[row.area] || 0) + 1
+    }
+    setNoLeidosPorArea(conteo)
+  }
+
+  // Marca como leídas las notificaciones del área que se acaba de abrir
+  async function marcarLeidoArea(area) {
+    if (!noLeidosPorArea[area]) return // nada pendiente, evita updates innecesarios
+    const { error } = await supabase
+      .from('notificaciones')
+      .update({ leido: true })
+      .eq('ot_number', otNumber)
+      .eq('area', area)
+      .eq('leido', false)
+
+    if (error) {
+      console.error('No se pudo marcar como leído:', error)
+      return
+    }
+    setNoLeidosPorArea((prev) => ({ ...prev, [area]: 0 }))
+  }
+
+  // Carga inicial de notificaciones + suscripción en vivo (Realtime) para esta OT
+  useEffect(() => {
+    loadNoLeidos()
+
+    const channel = supabase
+      .channel(`notificaciones-ot-${otNumber}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notificaciones', filter: `ot_number=eq.${otNumber}` },
+        () => {
+          loadNoLeidos()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otNumber])
+
+  // Al cambiar de pestaña, marca como leídas las notificaciones del área que se abre
+  useEffect(() => {
+    marcarLeidoArea(activeArea)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeArea, otNumber])
 
@@ -211,9 +304,11 @@ export default function OTDetail({ profile }) {
               key={a}
               className={activeArea === a ? 'btn' : 'btn btn-secondary'}
               onClick={() => setActiveArea(a)}
+              style={{ display: 'flex', alignItems: 'center' }}
             >
               {AREAS_CONFIG[a].label}
               {!esGerencia && a !== profile.area && ' 👁'}
+              <BadgeNoLeidos count={noLeidosPorArea[a]} />
             </button>
           ))}
         </div>
