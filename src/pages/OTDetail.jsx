@@ -29,6 +29,39 @@ async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
   }
 }
 
+// CSS del layout de dos columnas — con media query para colapsar a una
+// sola columna en pantallas angostas (tablet/mobile). Se define aquí,
+// scoped por nombre de clase, para no tocar index.css global.
+const LayoutCSS = () => (
+  <style>{`
+    .otdetail-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 20px;
+      align-items: start;
+    }
+    .otdetail-sidebar {
+      position: sticky;
+      top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .otdetail-section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--ocean-accent);
+      margin-bottom: 10px;
+    }
+    @media (max-width: 900px) {
+      .otdetail-grid { grid-template-columns: 1fr; }
+      .otdetail-sidebar { position: static; top: auto; }
+    }
+  `}</style>
+)
+
 // Modal embebido: muestra el documento sin salir de la app, con Office Online
 // para Word/Excel/PowerPoint, o directo (iframe/img) para PDF e imágenes.
 function VisorDocumento({ titulo, url, extension, onClose }) {
@@ -109,8 +142,8 @@ function EquiposIngresadosCard({ ingresos }) {
   if (!ingresos || ingresos.length === 0) {
     return (
       <div className="card">
-        <h4 style={{ marginTop: 0 }}>📦 Equipos Ingresados</h4>
-        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+        <div className="otdetail-section-label">📦 Equipos Ingresados</div>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
           Aún no hay equipos registrados en Ingresos para esta OT. Este registro se hace desde MetroTrack.
         </p>
       </div>
@@ -119,39 +152,41 @@ function EquiposIngresadosCard({ ingresos }) {
 
   return (
     <div className="card">
-      <h4 style={{ marginTop: 0 }}>📦 Equipos Ingresados — {ingresos.length} equipo{ingresos.length !== 1 ? 's' : ''}</h4>
-      <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: -8, marginBottom: 12 }}>
+      <div className="otdetail-section-label">📦 Equipos Ingresados — {ingresos.length} equipo{ingresos.length !== 1 ? 's' : ''}</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: -4, marginBottom: 14 }}>
         Datos jalados desde MetroTrack (pestaña Ingresos). Solo lectura aquí — para editar, hazlo en MetroTrack.
       </p>
-      {ingresos.map((eq, i) => (
-        <div
-          key={eq.id || i}
-          className="doc-item"
-          style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-            <strong style={{ fontSize: 13 }}>{eq.descripcion || `Equipo #${i + 1}`}</strong>
-            {eq.nro_guia && (
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                Guía: {eq.nro_guia}
-              </span>
-            )}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 12, color: 'var(--text-muted)', width: '100%' }}>
-            {eq.marca && <span><b>Marca:</b> {eq.marca}</span>}
-            {eq.modelo && <span><b>Modelo:</b> {eq.modelo}</span>}
-            {eq.nro_serie && <span><b>N° Serie:</b> {eq.nro_serie}</span>}
-            {eq.id_equipo && <span><b>ID:</b> {eq.id_equipo}</span>}
-            {eq.fecha_ingreso && <span><b>Fecha ingreso:</b> {eq.fecha_ingreso}</span>}
-            {eq.codigo_certificado && <span><b>Cert.:</b> {eq.codigo_certificado}</span>}
-          </div>
-          {eq.datos_adicionales && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-              {eq.datos_adicionales}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+        {ingresos.map((eq, i) => (
+          <div
+            key={eq.id || i}
+            style={{
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              padding: '12px 14px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+              <strong style={{ fontSize: 13, lineHeight: 1.3 }}>{eq.descripcion || `Equipo #${i + 1}`}</strong>
+              {eq.nro_guia && (
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                  {eq.nro_guia}
+                </span>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: 'var(--text-muted)' }}>
+              {eq.marca && <span><b>Marca:</b> {eq.marca}</span>}
+              {eq.modelo && <span><b>Modelo:</b> {eq.modelo}</span>}
+              {eq.nro_serie && <span><b>N° Serie:</b> {eq.nro_serie}</span>}
+              {eq.id_equipo && <span><b>ID:</b> {eq.id_equipo}</span>}
+              {eq.fecha_ingreso && <span><b>Ingreso:</b> {eq.fecha_ingreso}</span>}
+              {eq.codigo_certificado && <span><b>Cert.:</b> {eq.codigo_certificado}</span>}
+              {eq.datos_adicionales && <span style={{ fontStyle: 'italic' }}>{eq.datos_adicionales}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -396,7 +431,9 @@ export default function OTDetail({ profile }) {
   const configArea = AREAS_CONFIG[activeArea]
 
   return (
-    <div className="container">
+    <div className="container container-ancho" style={{ maxWidth: 1400, margin: '0 auto' }}>
+      <LayoutCSS />
+
       <a className="link-back" onClick={() => navigate(-1)}>&larr; Volver a la lista</a>
 
       <div className="top-bar" style={{ marginTop: 16 }}>
@@ -419,7 +456,7 @@ export default function OTDetail({ profile }) {
       </div>
 
       {areasVisibles.length > 1 && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
           {areasVisibles.map((a) => (
             <button
               key={a}
@@ -435,120 +472,126 @@ export default function OTDetail({ profile }) {
         </div>
       )}
 
-      <h3>{configArea.label}</h3>
+      <div className="otdetail-grid">
+        {/* ── Columna principal: contenido de trabajo del área activa ── */}
+        <div>
+          <h3 style={{ marginTop: 0 }}>{configArea.label}</h3>
 
-      {/* Solo en Logística: reflejo de solo lectura de los equipos ya registrados en MetroTrack */}
-      {activeArea === 'logistica' && (
-        <EquiposIngresadosCard ingresos={service?.ingresos} />
-      )}
+          {/* Solo en Logística: reflejo de solo lectura de los equipos ya registrados en MetroTrack */}
+          {activeArea === 'logistica' && (
+            <EquiposIngresadosCard ingresos={service?.ingresos} />
+          )}
 
-      {puedeSubir ? (
-        <UploadForm
-          otNumber={otNumber}
-          area={activeArea}
-          tipos={configArea.tipos}
-          userId={profile.id}
-          documentosExistentes={documentos}
-          onUploaded={handleUploaded}
-        />
-      ) : (
-        <p style={{ color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic' }}>
-          Solo lectura — esta área no te pertenece.
-        </p>
-      )}
-
-      <div className="card">
-        <h4 style={{ marginTop: 0 }}>Documentos subidos</h4>
-        {documentos.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Aún no hay documentos en esta área.</p>}
-        {documentos.map((d) => (
-          <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
-                {' · '}
-                {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </div>
-            </div>
-            <button
-              className="btn btn-secondary"
-              style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
-              disabled={abriendoId === d.id}
-              onClick={() => verDocumento(d)}
-            >
-              {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Observaciones de la pestaña de área activa ── */}
-      <div className="card">
-        <h4 style={{ marginTop: 0 }}>Observaciones — {configArea.label}</h4>
-
-        {puedeSubir && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-            <textarea
-              value={nuevaObs}
-              onChange={(e) => setNuevaObs(e.target.value)}
-              placeholder={`Escribe una observación o consideración de ${configArea.label} sobre este servicio...`}
-              rows={3}
-              style={{ resize: 'vertical' }}
+          {puedeSubir ? (
+            <UploadForm
+              otNumber={otNumber}
+              area={activeArea}
+              tipos={configArea.tipos}
+              userId={profile.id}
+              documentosExistentes={documentos}
+              onUploaded={handleUploaded}
             />
-            <button
-              className="btn"
-              style={{ alignSelf: 'flex-start' }}
-              disabled={guardandoObs || !nuevaObs.trim()}
-              onClick={agregarObservacion}
-            >
-              {guardandoObs ? 'Guardando...' : '+ Agregar observación'}
-            </button>
-          </div>
-        )}
+          ) : (
+            <div className="card">
+              <p style={{ color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic', margin: 0 }}>
+                Solo lectura — esta área no te pertenece.
+              </p>
+            </div>
+          )}
 
-        {observaciones.length === 0 && (
-          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aún no hay observaciones de esta área.</p>
-        )}
-        {observaciones.map((o) => (
-          <div key={o.id} className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-            <div style={{ fontSize: 14 }}>{o.texto}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {o.usuario_nombre || '—'} · {formatFechaObs(o.created_at)}
-            </div>
+          <div className="card">
+            <div className="otdetail-section-label">Documentos subidos</div>
+            {documentos.length === 0 && <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>}
+            {documentos.map((d) => (
+              <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                    {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
+                    {' · '}
+                    {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
+                  disabled={abriendoId === d.id}
+                  onClick={() => verDocumento(d)}
+                >
+                  {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
+                </button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
 
-      {/* ── Resumen cross-área: SIEMPRE visible, sin importar la pestaña activa ── */}
-      <div className="card">
-        <h4 style={{ marginTop: 0 }}>Resumen de observaciones — todas las áreas</h4>
-        {resumenObs.length === 0 && (
-          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aún no hay observaciones registradas por ninguna área.</p>
-        )}
-        {resumenObs.map((o) => (
-          <div key={o.id} className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                  color: 'var(--ocean-accent)',
-                  background: 'rgba(45,212,191,0.12)',
-                  borderRadius: 6,
-                  padding: '2px 8px',
-                }}
-              >
-                {AREAS_CONFIG[o.area]?.label || o.area}
-              </span>
-            </div>
-            <div style={{ fontSize: 14 }}>{o.texto}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {o.usuario_nombre || '—'} · {formatFechaObs(o.created_at)}
-            </div>
+        {/* ── Columna lateral: Observaciones (sticky, siempre visible mientras se hace scroll) ── */}
+        <div className="otdetail-sidebar">
+          <div className="card">
+            <div className="otdetail-section-label">Observaciones — {configArea.label}</div>
+
+            {puedeSubir && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+                <textarea
+                  value={nuevaObs}
+                  onChange={(e) => setNuevaObs(e.target.value)}
+                  placeholder={`Observación de ${configArea.label} sobre este servicio...`}
+                  rows={3}
+                  style={{ resize: 'vertical' }}
+                />
+                <button
+                  className="btn"
+                  style={{ alignSelf: 'flex-start' }}
+                  disabled={guardandoObs || !nuevaObs.trim()}
+                  onClick={agregarObservacion}
+                >
+                  {guardandoObs ? 'Guardando...' : '+ Agregar observación'}
+                </button>
+              </div>
+            )}
+
+            {observaciones.length === 0 && (
+              <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Aún no hay observaciones de esta área.</p>
+            )}
+            {observaciones.map((o) => (
+              <div key={o.id} className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                <div style={{ fontSize: 13 }}>{o.texto}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {o.usuario_nombre || '—'} · {formatFechaObs(o.created_at)}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+
+          <div className="card">
+            <div className="otdetail-section-label">Resumen — todas las áreas</div>
+            {resumenObs.length === 0 && (
+              <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Aún no hay observaciones registradas por ninguna área.</p>
+            )}
+            {resumenObs.map((o) => (
+              <div key={o.id} className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    color: 'var(--ocean-accent)',
+                    background: 'rgba(45,212,191,0.12)',
+                    borderRadius: 6,
+                    padding: '2px 8px',
+                  }}
+                >
+                  {AREAS_CONFIG[o.area]?.label || o.area}
+                </span>
+                <div style={{ fontSize: 13 }}>{o.texto}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {o.usuario_nombre || '—'} · {formatFechaObs(o.created_at)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {visor && (
