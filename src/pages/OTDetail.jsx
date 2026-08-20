@@ -5,6 +5,7 @@ import { AREAS_CONFIG, TODAS_LAS_AREAS } from '../lib/areasConfig'
 import UploadForm from '../components/UploadForm'
 
 const WEBHOOK_URL_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/url-documento"
+const WEBHOOK_URL_LEER_FACTURA = "https://panel.5-189-165-144.sslip.io/api-patrones/leer-factura-ia"
 
 // Visibilidad cruzada de solo lectura (igual que las políticas de MinIO/RLS)
 const VISIBILIDAD_CRUZADA = {
@@ -74,9 +75,9 @@ function calcularSemaforo(cobranza) {
   return { key: 'pendiente', label: `Pendiente — vence en ${dias} días`, color: '#94a3b8' }
 }
 
-// Envuelve una promesa con un tope de tiempo — si algo se cuelga (ej. una
-// red lenta o un worker que nunca responde), esto garantiza que el usuario
-// vea un error en vez de quedarse con el reloj de arena para siempre.
+// Envuelve una promesa con un tope de tiempo — si algo se cuelga, esto
+// garantiza que el usuario vea un error en vez de quedarse con el reloj
+// de arena para siempre.
 function conTimeout(promise, ms, mensaje) {
   return Promise.race([
     promise,
@@ -84,7 +85,12 @@ function conTimeout(promise, ms, mensaje) {
   ])
 }
 
-// ── Lector de PDF de facturas (pdf.js cargado desde CDN, sin dependencia npm) ──
+// ── pdf.js cargado desde CDN (sin dependencia npm) — se usa solo para
+// RENDERIZAR la página como imagen, no para extraer texto (las facturas
+// de MetroMecánica no tienen texto seleccionable en el cuerpo, solo en
+// el logo/pie de página — el contenido real es una imagen incrustada).
+// El worker se descarga y se convierte en Blob de mismo origen para
+// evitar que el navegador bloquee la creación del Worker cross-origin.
 let pdfjsPromise = null
 function cargarPdfJs() {
   if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -112,12 +118,10 @@ function cargarPdfJs() {
   return pdfjsPromise
 }
 
-// Extrae el texto de un PDF. Devuelve TANTO el texto "plano" (items unidos
-// con espacio, base para el parser de regex) COMO el texto "legible"
-// (reconstruido por línea según la posición Y de cada item en la página)
-// — este segundo se muestra en el modo diagnóstico, mucho más fácil de
-// comparar visualmente contra el PDF original.
-async function extraerTextoPDF(file) {
+// Renderiza la primera página del PDF como imagen PNG y devuelve solo el
+// base64 (sin el prefijo "data:image/png;base64,"). Escala 2x para que
+// el texto se lea nítido cuando Claude lo analice.
+async function renderizarPrimeraPaginaComoImagen(file) {
   const pdfjsLib = await conTimeout(cargarPdfJs(), 15000, 'No se pudo iniciar el lector de PDF (tiempo de espera agotado).')
   const buf = await file.arrayBuffer()
   const pdf = await conTimeout(
@@ -125,82 +129,50 @@ async function extraerTextoPDF(file) {
     20000,
     'El PDF tardó demasiado en procesarse. Intenta de nuevo.'
   )
-  let planoParaRegex = ''
-  let lineasLegibles = []
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i)
-    const content = await page.getTextContent()
-    planoParaRegex += content.items.map((it) => it.str).join(' ') + '\n'
-
-    const porY = {}
-    content.items.forEach((it) => {
-      const y = Math.round(it.transform[5])
-      if (!porY[y]) porY[y] = []
-      porY[y].push(it)
-    })
-    const ysOrdenados = Object.keys(porY).map(Number).sort((a, b) => b - a)
-    ysOrdenados.forEach((y) => {
-      const linea = porY[y].sort((a, b) => a.transform[4] - b.transform[4]).map((it) => it.str).join(' ')
-      if (linea.trim()) lineasLegibles.push(linea)
-    })
-  }
-  return { planoParaRegex, textoLegible: lineasLegibles.join('\n') }
+  const page = await pdf.getPage(1)
+  const viewport = page.getViewport({ scale: 2 })
+  const canvas = document.createElement('canvas')
+  canvas.width = viewport.width
+  canvas.height = viewport.height
+  const ctx = canvas.getContext('2d')
+  await page.render({ canvasContext: ctx, viewport }).promise
+  const dataUrl = canvas.toDataURL('image/png')
+  return dataUrl.split(',')[1]
 }
 
-// Parser de facturas MetroMecánica (formato "Factura Online" / SUNAT).
-// Extrae N° de factura, fechas, forma de pago, monto y detracción.
-// Si el formato de una factura difiere (otro proveedor de facturación),
-// simplemente no encuentra el campo y el usuario lo completa a mano —
-// nunca bloquea, solo ayuda cuando puede.
-function parsearFactura(texto) {
-  const get = (regex) => {
-    const m = texto.match(regex)
-    return m ? m[1].trim() : null
+// Manda la imagen de la factura al webhook de n8n, que la procesa con
+// Claude (visión) y devuelve el JSON con los campos ya extraídos.
+async function leerFacturaConIA(imagenBase64) {
+  const resp = await conTimeout(
+    fetch(WEBHOOK_URL_LEER_FACTURA, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imagen_base64: imagenBase64 }),
+    }),
+    30000,
+    'La lectura con IA tardó demasiado. Intenta de nuevo.'
+  )
+  if (!resp.ok) {
+    throw new Error(`El servidor no pudo procesar la factura (código ${resp.status})`)
   }
-  const numLimpio = (s) => (s ? parseFloat(s.replace(/,/g, '')) : null)
-  const toISO = (ddmmaaaa) => {
-    if (!ddmmaaaa) return null
-    const [d, m, y] = ddmmaaaa.split('/')
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-  }
+  return await resp.json()
+}
 
-  const numero_factura = get(/N[°o]\s*:?\s*(F\d{3}-\d+)/i)
-
-  const rucMatch = texto.match(/Cliente\s*:?\s*[^\n]+?\s*R\.?\s*U\.?\s*C\.?\s*:?\s*(\d{9,11})/i)
-  const ruc_cliente = rucMatch ? rucMatch[1] : null
-
-  const forma_pago_raw = get(/Forma\s+de\s+Pago\s*:?\s*(\w+)/i) || ''
-
-  const fecha_emision = toISO(get(/Fecha\s+Emisi[oó]n\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i))
-  const fecha_vencimiento = toISO(get(/Fecha\s+Vencto\.?\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i))
-
-  const montoCuotaRaw = get(/Monto\s*:?\s*S\/\.?\s*([\d,]+\.\d{2})/i)
-  const totalVentaRaw = get(/Total\s+Precio\s+de\s+Venta\s*:?\s*S\/\.?\s*([\d,]+\.\d{2})/i)
-  const detraccionRaw = get(/MONTO\s+DE\s+LA\s+DETRACC?I[OÓ]N\s*:?\s*([\d,]+\.\d{2})/i)
-  const numero_cuenta_detraccion = get(/NUMERO\s+DE\s+CUENTA\s+BANCARIA\s*(?:BN)?\s*:?\s*([\d\-]+)/i)
-
-  const monto_total = numLimpio(totalVentaRaw) ?? numLimpio(montoCuotaRaw)
-  const monto_detraccion = numLimpio(detraccionRaw)
-
+// A partir de los datos que devuelve la IA (numero_factura, ruc_cliente,
+// fecha_emision, fecha_vencimiento, forma_pago, monto_total,
+// monto_detraccion, numero_cuenta_detraccion), deduce la condición de
+// pago y los días de crédito comparando las dos fechas — igual criterio
+// que antes, pero ahora las fechas vienen de un modelo con visión en vez
+// de un regex sobre texto que no existía.
+function deducirCondicionPago(datos) {
   let dias_credito = 0
-  if (fecha_emision && fecha_vencimiento) {
-    dias_credito = Math.round((new Date(fecha_vencimiento) - new Date(fecha_emision)) / 86400000)
+  if (datos.fecha_emision && datos.fecha_vencimiento) {
+    dias_credito = Math.round((new Date(datos.fecha_vencimiento) - new Date(datos.fecha_emision)) / 86400000)
   }
-
   let condicion_pago = 'personalizado'
-  if (/contado/i.test(forma_pago_raw) || dias_credito === 0) condicion_pago = 'contado'
+  if (datos.forma_pago === 'contado' || dias_credito === 0) condicion_pago = 'contado'
   else if ([15, 30, 60].includes(dias_credito)) condicion_pago = `credito_${dias_credito}`
-
-  return {
-    numero_factura,
-    ruc_cliente,
-    fecha_emision,
-    dias_credito,
-    condicion_pago,
-    monto_total,
-    monto_detraccion,
-    numero_cuenta_detraccion,
-  }
+  return { dias_credito, condicion_pago }
 }
 
 // CSS del layout de dos columnas — con media query para colapsar a una
@@ -287,9 +259,10 @@ function VisorDocumento({ titulo, url, extension, onClose }) {
   )
 }
 
-// Modal de diagnóstico: muestra el texto crudo extraído del PDF, con un
-// botón para copiarlo.
-function TextoExtraidoModal({ texto, onClose }) {
+// Modal de diagnóstico: muestra el JSON crudo que devolvió la IA — útil
+// si algún campo sale mal, para ver exactamente qué entendió el modelo.
+function JsonDebugModal({ datos, onClose }) {
+  const texto = JSON.stringify(datos, null, 2)
   const [copiado, setCopiado] = useState(false)
 
   function copiar() {
@@ -311,13 +284,13 @@ function TextoExtraidoModal({ texto, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--panel-bg, #0f172a)', borderRadius: 12, width: '100%', maxWidth: 700,
+          background: 'var(--panel-bg, #0f172a)', borderRadius: 12, width: '100%', maxWidth: 600,
           maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
           border: '1px solid var(--border)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
-          <strong style={{ fontSize: 14 }}>Texto extraído del PDF (diagnóstico)</strong>
+          <strong style={{ fontSize: 14 }}>Datos extraídos por la IA (diagnóstico)</strong>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={copiar}>
               {copiado ? '✓ Copiado' : '📋 Copiar'}
@@ -474,7 +447,7 @@ function FacturaDropzone({ onFile, leyendo }) {
         disabled={leyendo}
       />
       <p className="dropzone-text">
-        {leyendo ? '⏳ Leyendo factura...' : '📎 Arrastra el PDF de la factura aquí, o haz clic para seleccionar'}
+        {leyendo ? '🤖 Leyendo factura con IA...' : '📎 Arrastra el PDF de la factura aquí, o haz clic para seleccionar'}
       </p>
     </div>
   )
@@ -488,7 +461,7 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
   const [guardando, setGuardando] = useState(false)
   const [leyendoPDF, setLeyendoPDF] = useState(false)
   const [avisoRuc, setAvisoRuc] = useState(null)
-  const [textoDebug, setTextoDebug] = useState(null)
+  const [datosIA, setDatosIA] = useState(null)
   const [mostrarDebug, setMostrarDebug] = useState(false)
   const [form, setForm] = useState({
     numero_factura: '',
@@ -555,12 +528,11 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     }
     setLeyendoPDF(true)
     setAvisoRuc(null)
-    setTextoDebug(null)
+    setDatosIA(null)
     try {
-      const { planoParaRegex, textoLegible } = await extraerTextoPDF(file)
-      const datos = parsearFactura(planoParaRegex)
-
-      setTextoDebug(textoLegible)
+      const imagenBase64 = await renderizarPrimeraPaginaComoImagen(file)
+      const datos = await leerFacturaConIA(imagenBase64)
+      setDatosIA(datos)
 
       if (!datos.numero_factura && !datos.fecha_emision && !datos.monto_total) {
         setMostrarDebug(true)
@@ -570,20 +542,22 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         setAvisoRuc(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}). Verifica que sea el PDF correcto.`)
       }
 
+      const { dias_credito, condicion_pago } = deducirCondicionPago(datos)
+
       setForm((prev) => ({
         ...prev,
         numero_factura: datos.numero_factura || prev.numero_factura,
         fecha_emision: datos.fecha_emision || prev.fecha_emision,
-        condicion_pago: datos.condicion_pago || prev.condicion_pago,
-        dias_credito: datos.dias_credito ?? prev.dias_credito,
+        condicion_pago: condicion_pago || prev.condicion_pago,
+        dias_credito: dias_credito ?? prev.dias_credito,
         monto: datos.monto_total ?? prev.monto,
         monto_detraccion: datos.monto_detraccion ?? prev.monto_detraccion,
         numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
       }))
       setEditando(true)
     } catch (err) {
-      console.error('Error leyendo PDF de factura:', err)
-      alert('No se pudo leer el PDF: ' + err.message)
+      console.error('Error leyendo factura con IA:', err)
+      alert('No se pudo leer la factura: ' + err.message)
     }
     setLeyendoPDF(false)
   }
@@ -692,14 +666,14 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         </div>
       )}
 
-      {textoDebug && (
+      {datosIA && (
         <div style={{ marginBottom: 14 }}>
           <button
             className="btn btn-secondary"
             style={{ fontSize: 11, padding: '4px 10px' }}
             onClick={() => setMostrarDebug(true)}
           >
-            🔍 Ver texto extraído (para depurar)
+            🔍 Ver datos extraídos por la IA
           </button>
         </div>
       )}
@@ -823,8 +797,8 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         </div>
       )}
 
-      {mostrarDebug && textoDebug && (
-        <TextoExtraidoModal texto={textoDebug} onClose={() => setMostrarDebug(false)} />
+      {mostrarDebug && datosIA && (
+        <JsonDebugModal datos={datosIA} onClose={() => setMostrarDebug(false)} />
       )}
     </div>
   )
