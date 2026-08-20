@@ -85,11 +85,6 @@ function conTimeout(promise, ms, mensaje) {
 }
 
 // ── Lector de PDF de facturas (pdf.js cargado desde CDN, sin dependencia npm) ──
-// El worker de pdf.js se descarga y se convierte en un Blob de mismo origen
-// (en vez de apuntarlo directo a la URL del CDN) — esto evita que el
-// navegador bloquee o cuelgue silenciosamente la creación del Worker por
-// ser cross-origin, que es la causa más común de que pdf.js se quede
-// "cargando" para siempre sin completar ni lanzar un error capturable.
 let pdfjsPromise = null
 function cargarPdfJs() {
   if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -117,6 +112,11 @@ function cargarPdfJs() {
   return pdfjsPromise
 }
 
+// Extrae el texto de un PDF. Devuelve TANTO el texto "plano" (items unidos
+// con espacio, base para el parser de regex) COMO el texto "legible"
+// (reconstruido por línea según la posición Y de cada item en la página)
+// — este segundo se muestra en el modo diagnóstico, mucho más fácil de
+// comparar visualmente contra el PDF original.
 async function extraerTextoPDF(file) {
   const pdfjsLib = await conTimeout(cargarPdfJs(), 15000, 'No se pudo iniciar el lector de PDF (tiempo de espera agotado).')
   const buf = await file.arrayBuffer()
@@ -125,13 +125,26 @@ async function extraerTextoPDF(file) {
     20000,
     'El PDF tardó demasiado en procesarse. Intenta de nuevo.'
   )
-  let texto = ''
+  let planoParaRegex = ''
+  let lineasLegibles = []
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
     const content = await page.getTextContent()
-    texto += content.items.map((it) => it.str).join(' ') + '\n'
+    planoParaRegex += content.items.map((it) => it.str).join(' ') + '\n'
+
+    const porY = {}
+    content.items.forEach((it) => {
+      const y = Math.round(it.transform[5])
+      if (!porY[y]) porY[y] = []
+      porY[y].push(it)
+    })
+    const ysOrdenados = Object.keys(porY).map(Number).sort((a, b) => b - a)
+    ysOrdenados.forEach((y) => {
+      const linea = porY[y].sort((a, b) => a.transform[4] - b.transform[4]).map((it) => it.str).join(' ')
+      if (linea.trim()) lineasLegibles.push(linea)
+    })
   }
-  return texto
+  return { planoParaRegex, textoLegible: lineasLegibles.join('\n') }
 }
 
 // Parser de facturas MetroMecánica (formato "Factura Online" / SUNAT).
@@ -151,20 +164,20 @@ function parsearFactura(texto) {
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
   }
 
-  const numero_factura = get(/N[°o]\s*:\s*(F\d{3}-\d+)/i)
+  const numero_factura = get(/N[°o]\s*:?\s*(F\d{3}-\d+)/i)
 
-  const rucMatch = texto.match(/Cliente\s*:\s*[^\n]+?\s*R\.?U\.?C\.?\s*:\s*(\d+)/i)
+  const rucMatch = texto.match(/Cliente\s*:?\s*[^\n]+?\s*R\.?\s*U\.?\s*C\.?\s*:?\s*(\d{9,11})/i)
   const ruc_cliente = rucMatch ? rucMatch[1] : null
 
-  const forma_pago_raw = get(/Forma de Pago\s*:\s*(\w+)/i) || ''
+  const forma_pago_raw = get(/Forma\s+de\s+Pago\s*:?\s*(\w+)/i) || ''
 
-  const fecha_emision = toISO(get(/Fecha Emisi[oó]n\s*:\s*(\d{2}\/\d{2}\/\d{4})/i))
-  const fecha_vencimiento = toISO(get(/Fecha Vencto\.?\s*:\s*(\d{2}\/\d{2}\/\d{4})/i))
+  const fecha_emision = toISO(get(/Fecha\s+Emisi[oó]n\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i))
+  const fecha_vencimiento = toISO(get(/Fecha\s+Vencto\.?\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i))
 
-  const montoCuotaRaw = get(/Monto\s*:\s*S\/\s*([\d,]+\.\d{2})/i)
-  const totalVentaRaw = get(/Total Precio de Venta\s*:\s*S\/\s*([\d,]+\.\d{2})/i)
-  const detraccionRaw = get(/MONTO DE LA DETRACC?I[OÓ]N\s*([\d,]+\.\d{2})/i)
-  const numero_cuenta_detraccion = get(/NUMERO DE CUENTA BANCARIA\s*(?:BN)?\s*:?\s*([\d\-]+)/i)
+  const montoCuotaRaw = get(/Monto\s*:?\s*S\/\.?\s*([\d,]+\.\d{2})/i)
+  const totalVentaRaw = get(/Total\s+Precio\s+de\s+Venta\s*:?\s*S\/\.?\s*([\d,]+\.\d{2})/i)
+  const detraccionRaw = get(/MONTO\s+DE\s+LA\s+DETRACC?I[OÓ]N\s*:?\s*([\d,]+\.\d{2})/i)
+  const numero_cuenta_detraccion = get(/NUMERO\s+DE\s+CUENTA\s+BANCARIA\s*(?:BN)?\s*:?\s*([\d\-]+)/i)
 
   const monto_total = numLimpio(totalVentaRaw) ?? numLimpio(montoCuotaRaw)
   const monto_detraccion = numLimpio(detraccionRaw)
@@ -274,6 +287,54 @@ function VisorDocumento({ titulo, url, extension, onClose }) {
   )
 }
 
+// Modal de diagnóstico: muestra el texto crudo extraído del PDF, con un
+// botón para copiarlo.
+function TextoExtraidoModal({ texto, onClose }) {
+  const [copiado, setCopiado] = useState(false)
+
+  function copiar() {
+    navigator.clipboard.writeText(texto).then(() => {
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 2000)
+    })
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--panel-bg, #0f172a)', borderRadius: 12, width: '100%', maxWidth: 700,
+          maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          border: '1px solid var(--border)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+          <strong style={{ fontSize: 14 }}>Texto extraído del PDF (diagnóstico)</strong>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={copiar}>
+              {copiado ? '✓ Copiado' : '📋 Copiar'}
+            </button>
+            <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+          </div>
+        </div>
+        <div style={{ padding: 16, overflowY: 'auto' }}>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, fontFamily: 'monospace', color: 'var(--text-light)', margin: 0 }}>
+            {texto}
+          </pre>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Pastilla roja con el número de notificaciones no leídas. No se renderiza si count es 0.
 function BadgeNoLeidos({ count }) {
   if (!count) return null
@@ -307,10 +368,6 @@ function formatFechaObs(fechaIso) {
 }
 
 // ── Card de solo lectura: Equipos Ingresados ──
-// Muestra, dentro de la pestaña de Logística, los equipos que ya fueron
-// registrados en MetroTrack (pestaña "Ingresos" del modal de la OT).
-// Los datos viven en `services.ingresos` (jsonb) — no se editan aquí,
-// solo se reflejan; la edición sigue haciéndose en MetroTrack.
 function EquiposIngresadosCard({ ingresos }) {
   if (!ingresos || ingresos.length === 0) {
     return (
@@ -365,9 +422,6 @@ function EquiposIngresadosCard({ ingresos }) {
 }
 
 // ── Dropzone de la factura PDF: arrastrar y soltar, o clic para seleccionar ──
-// Mismo patrón visual y de eventos que UploadForm.jsx (dragCounter con ref
-// para no perder el estado de "arrastrando" entre los eventos enter/leave
-// de elementos hijos del dropzone).
 function FacturaDropzone({ onFile, leyendo }) {
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
@@ -427,12 +481,6 @@ function FacturaDropzone({ onFile, leyendo }) {
 }
 
 // ── Card de Cobranza — solo en la pestaña de Contabilidad ──
-// Registra/edita la factura de la OT con su condición de pago, calcula
-// la fecha de vencimiento de cobranza, y muestra el semáforo de estado.
-// Permite adjuntar el PDF de la factura (arrastrar o clic) para
-// autocompletar el formulario. El envío de recordatorios (correo/WhatsApp)
-// se resuelve en n8n aparte; esta card solo captura y refleja los datos
-// que ese workflow consume.
 function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
   const [cobranza, setCobranza] = useState(null)
   const [cargando, setCargando] = useState(true)
@@ -440,6 +488,8 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
   const [guardando, setGuardando] = useState(false)
   const [leyendoPDF, setLeyendoPDF] = useState(false)
   const [avisoRuc, setAvisoRuc] = useState(null)
+  const [textoDebug, setTextoDebug] = useState(null)
+  const [mostrarDebug, setMostrarDebug] = useState(false)
   const [form, setForm] = useState({
     numero_factura: '',
     fecha_emision: new Date().toISOString().split('T')[0],
@@ -505,12 +555,15 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     }
     setLeyendoPDF(true)
     setAvisoRuc(null)
+    setTextoDebug(null)
     try {
-      const texto = await extraerTextoPDF(file)
-      const datos = parsearFactura(texto)
+      const { planoParaRegex, textoLegible } = await extraerTextoPDF(file)
+      const datos = parsearFactura(planoParaRegex)
+
+      setTextoDebug(textoLegible)
 
       if (!datos.numero_factura && !datos.fecha_emision && !datos.monto_total) {
-        alert('No se pudo extraer ningún dato de este PDF. Puede que el formato sea distinto — completa el formulario a mano.')
+        setMostrarDebug(true)
       }
 
       if (datos.ruc_cliente && rucOT && datos.ruc_cliente !== rucOT) {
@@ -604,7 +657,6 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     )
   }
 
-  // Sin factura registrada aún y sin permiso de edición: no hay nada que mostrar
   if (!cobranza && !puedeEditar) {
     return (
       <div className="card">
@@ -635,8 +687,20 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
       </div>
 
       {puedeEditar && (
-        <div style={{ marginBottom: 14 }}>
+        <div style={{ marginBottom: 8 }}>
           <FacturaDropzone onFile={handleArchivoPDF} leyendo={leyendoPDF} />
+        </div>
+      )}
+
+      {textoDebug && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: 11, padding: '4px 10px' }}
+            onClick={() => setMostrarDebug(true)}
+          >
+            🔍 Ver texto extraído (para depurar)
+          </button>
         </div>
       )}
 
@@ -758,6 +822,10 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
           </div>
         </div>
       )}
+
+      {mostrarDebug && textoDebug && (
+        <TextoExtraidoModal texto={textoDebug} onClose={() => setMostrarDebug(false)} />
+      )}
     </div>
   )
 }
@@ -769,23 +837,20 @@ export default function OTDetail({ profile }) {
   const [documentos, setDocumentos] = useState([])
   const [activeArea, setActiveArea] = useState(profile.area === 'gerencia' ? 'laboratorio' : profile.area)
   const [abriendoId, setAbriendoId] = useState(null)
-  const [visor, setVisor] = useState(null) // { titulo, url, extension } | null
-  const [noLeidosPorArea, setNoLeidosPorArea] = useState({}) // { laboratorio: 2, comercial: 0, ... }
+  const [visor, setVisor] = useState(null)
+  const [noLeidosPorArea, setNoLeidosPorArea] = useState({})
 
-  // ── Observaciones por área ──
-  const [observaciones, setObservaciones] = useState([]) // de la activeArea
+  const [observaciones, setObservaciones] = useState([])
   const [nuevaObs, setNuevaObs] = useState('')
   const [guardandoObs, setGuardandoObs] = useState(false)
-  const [resumenObs, setResumenObs] = useState([]) // de TODAS las áreas, para el resumen cross-área
+  const [resumenObs, setResumenObs] = useState([])
 
   const esGerencia = profile.area === 'gerencia'
 
-  // Áreas que este usuario puede ver (propia + las de solo lectura permitidas)
   const areasVisibles = esGerencia
     ? TODAS_LAS_AREAS
     : [profile.area, ...(VISIBILIDAD_CRUZADA[profile.area] || [])]
 
-  // Es la propia área del usuario (donde sí puede subir), o gerencia que puede subir a cualquiera
   const puedeSubir = esGerencia || activeArea === profile.area
 
   useEffect(() => {
@@ -800,7 +865,6 @@ export default function OTDetail({ profile }) {
     loadService()
   }, [otNumber])
 
-  // Registrar en el log de auditoría cada vez que se abre esta OT
   useEffect(() => {
     if (!profile?.id || !otNumber) return
     registrarAuditoria(profile.id, 'ver', otNumber, `Área vista: ${activeArea}`)
@@ -808,7 +872,6 @@ export default function OTDetail({ profile }) {
   }, [otNumber, activeArea, profile?.id])
 
   async function loadDocumentos() {
-    // La política RLS ya decide qué puede leer cada área — el frontend solo pide lo que el usuario está viendo
     const { data } = await supabase
       .from('documentos')
       .select('*')
@@ -818,7 +881,6 @@ export default function OTDetail({ profile }) {
 
     const docs = data || []
 
-    // Cruzar subido_por (UUID) con profiles.full_name — sin depender de FK en Supabase
     const ids = [...new Set(docs.map((d) => d.subido_por).filter(Boolean))]
     let nombresPorId = {}
     if (ids.length > 0) {
@@ -837,7 +899,6 @@ export default function OTDetail({ profile }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeArea, otNumber])
 
-  // ── Cargar observaciones de la pestaña de área activa ──
   async function loadObservaciones() {
     const { data, error } = await supabase
       .from('observaciones_ot')
@@ -853,7 +914,6 @@ export default function OTDetail({ profile }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeArea, otNumber])
 
-  // ── Cargar el resumen de TODAS las áreas (no depende de activeArea) ──
   async function loadResumenObservaciones() {
     const { data, error } = await supabase
       .from('observaciones_ot')
@@ -890,7 +950,6 @@ export default function OTDetail({ profile }) {
     setGuardandoObs(false)
   }
 
-  // Cuenta notificaciones no leídas por área, solo para las áreas visibles de este usuario
   async function loadNoLeidos() {
     if (!otNumber || areasVisibles.length === 0) return
     const { data, error } = await supabase
@@ -912,9 +971,8 @@ export default function OTDetail({ profile }) {
     setNoLeidosPorArea(conteo)
   }
 
-  // Marca como leídas las notificaciones del área que se acaba de abrir
   async function marcarLeidoArea(area) {
-    if (!noLeidosPorArea[area]) return // nada pendiente, evita updates innecesarios
+    if (!noLeidosPorArea[area]) return
     const { error } = await supabase
       .from('notificaciones')
       .update({ leido: true })
@@ -929,7 +987,6 @@ export default function OTDetail({ profile }) {
     setNoLeidosPorArea((prev) => ({ ...prev, [area]: 0 }))
   }
 
-  // Carga inicial de notificaciones + suscripción en vivo (Realtime) para esta OT
   useEffect(() => {
     loadNoLeidos()
 
@@ -950,7 +1007,6 @@ export default function OTDetail({ profile }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [otNumber])
 
-  // Al cambiar de pestaña, marca como leídas las notificaciones del área que se abre
   useEffect(() => {
     marcarLeidoArea(activeArea)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -961,8 +1017,6 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
   }
 
-  // Pide a n8n una URL firmada temporal de MinIO y abre el documento en el visor embebido.
-  // El bucket es privado — nunca se expone una URL directa y permanente.
   async function verDocumento(doc) {
     if (!doc.ruta_minio) {
       alert('Este documento no tiene una ruta válida en MinIO.')
@@ -990,9 +1044,6 @@ export default function OTDetail({ profile }) {
     setAbriendoId(null)
   }
 
-  // El Word original de la OT (adjuntado en MetroTrack) es el documento "madre":
-  // todas las áreas trabajan a partir de él, así que se muestra sin restricción
-  // de visibilidad cruzada — a diferencia de los documentos internos por área.
   function verDocumentoOT() {
     if (!service?.ot_file_url) return
     registrarAuditoria(profile.id, 'ver_documento_ot', otNumber, 'Word original de la OT')
@@ -1044,16 +1095,13 @@ export default function OTDetail({ profile }) {
       )}
 
       <div className="otdetail-grid">
-        {/* ── Columna principal: contenido de trabajo del área activa ── */}
         <div>
           <h3 style={{ marginTop: 0 }}>{configArea.label}</h3>
 
-          {/* Solo en Logística: reflejo de solo lectura de los equipos ya registrados en MetroTrack */}
           {activeArea === 'logistica' && (
             <EquiposIngresadosCard ingresos={service?.ingresos} />
           )}
 
-          {/* Solo en Contabilidad: registro de factura + condición de pago + semáforo de cobranza */}
           {activeArea === 'contabilidad' && (
             <CobranzaCard
               otNumber={otNumber}
@@ -1106,7 +1154,6 @@ export default function OTDetail({ profile }) {
           </div>
         </div>
 
-        {/* ── Columna lateral: Observaciones (sticky, siempre visible mientras se hace scroll) ── */}
         <div className="otdetail-sidebar">
           <div className="card">
             <div className="otdetail-section-label">Observaciones — {configArea.label}</div>
