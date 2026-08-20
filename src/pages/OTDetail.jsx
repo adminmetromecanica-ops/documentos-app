@@ -100,6 +100,62 @@ function formatFechaObs(fechaIso) {
   })
 }
 
+// ── Card de solo lectura: Equipos Ingresados ──
+// Muestra, dentro de la pestaña de Logística, los equipos que ya fueron
+// registrados en MetroTrack (pestaña "Ingresos" del modal de la OT).
+// Los datos viven en `services.ingresos` (jsonb) — no se editan aquí,
+// solo se reflejan; la edición sigue haciéndose en MetroTrack.
+function EquiposIngresadosCard({ ingresos }) {
+  if (!ingresos || ingresos.length === 0) {
+    return (
+      <div className="card">
+        <h4 style={{ marginTop: 0 }}>📦 Equipos Ingresados</h4>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+          Aún no hay equipos registrados en Ingresos para esta OT. Este registro se hace desde MetroTrack.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card">
+      <h4 style={{ marginTop: 0 }}>📦 Equipos Ingresados — {ingresos.length} equipo{ingresos.length !== 1 ? 's' : ''}</h4>
+      <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: -8, marginBottom: 12 }}>
+        Datos jalados desde MetroTrack (pestaña Ingresos). Solo lectura aquí — para editar, hazlo en MetroTrack.
+      </p>
+      {ingresos.map((eq, i) => (
+        <div
+          key={eq.id || i}
+          className="doc-item"
+          style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+            <strong style={{ fontSize: 13 }}>{eq.descripcion || `Equipo #${i + 1}`}</strong>
+            {eq.nro_guia && (
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                Guía: {eq.nro_guia}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 12, color: 'var(--text-muted)', width: '100%' }}>
+            {eq.marca && <span><b>Marca:</b> {eq.marca}</span>}
+            {eq.modelo && <span><b>Modelo:</b> {eq.modelo}</span>}
+            {eq.nro_serie && <span><b>N° Serie:</b> {eq.nro_serie}</span>}
+            {eq.id_equipo && <span><b>ID:</b> {eq.id_equipo}</span>}
+            {eq.fecha_ingreso && <span><b>Fecha ingreso:</b> {eq.fecha_ingreso}</span>}
+            {eq.codigo_certificado && <span><b>Cert.:</b> {eq.codigo_certificado}</span>}
+          </div>
+          {eq.datos_adicionales && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+              {eq.datos_adicionales}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function OTDetail({ profile }) {
   const { otNumber } = useParams()
   const navigate = useNavigate()
@@ -380,6 +436,11 @@ export default function OTDetail({ profile }) {
       )}
 
       <h3>{configArea.label}</h3>
+
+      {/* Solo en Logística: reflejo de solo lectura de los equipos ya registrados en MetroTrack */}
+      {activeArea === 'logistica' && (
+        <EquiposIngresadosCard ingresos={service?.ingresos} />
+      )}
 
       {puedeSubir ? (
         <UploadForm
