@@ -74,30 +74,57 @@ function calcularSemaforo(cobranza) {
   return { key: 'pendiente', label: `Pendiente — vence en ${dias} días`, color: '#94a3b8' }
 }
 
+// Envuelve una promesa con un tope de tiempo — si algo se cuelga (ej. una
+// red lenta o un worker que nunca responde), esto garantiza que el usuario
+// vea un error en vez de quedarse con el reloj de arena para siempre.
+function conTimeout(promise, ms, mensaje) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(mensaje)), ms)),
+  ])
+}
+
 // ── Lector de PDF de facturas (pdf.js cargado desde CDN, sin dependencia npm) ──
+// El worker de pdf.js se descarga y se convierte en un Blob de mismo origen
+// (en vez de apuntarlo directo a la URL del CDN) — esto evita que el
+// navegador bloquee o cuelgue silenciosamente la creación del Worker por
+// ser cross-origin, que es la causa más común de que pdf.js se quede
+// "cargando" para siempre sin completar ni lanzar un error capturable.
 let pdfjsPromise = null
 function cargarPdfJs() {
-  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib)
+  if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    return Promise.resolve(window.pdfjsLib)
+  }
   if (!pdfjsPromise) {
-    pdfjsPromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script')
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
-      script.onload = () => {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-        resolve(window.pdfjsLib)
+    pdfjsPromise = (async () => {
+      if (!window.pdfjsLib) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script')
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+          script.onload = resolve
+          script.onerror = () => reject(new Error('No se pudo cargar la librería de lectura de PDF'))
+          document.head.appendChild(script)
+        })
       }
-      script.onerror = () => reject(new Error('No se pudo cargar el lector de PDF'))
-      document.head.appendChild(script)
-    })
+      const workerResp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js')
+      if (!workerResp.ok) throw new Error('No se pudo descargar el worker de pdf.js')
+      const workerCode = await workerResp.text()
+      const blob = new Blob([workerCode], { type: 'application/javascript' })
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob)
+      return window.pdfjsLib
+    })()
   }
   return pdfjsPromise
 }
 
 async function extraerTextoPDF(file) {
-  const pdfjsLib = await cargarPdfJs()
+  const pdfjsLib = await conTimeout(cargarPdfJs(), 15000, 'No se pudo iniciar el lector de PDF (tiempo de espera agotado).')
   const buf = await file.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: buf }).promise
+  const pdf = await conTimeout(
+    pdfjsLib.getDocument({ data: buf }).promise,
+    20000,
+    'El PDF tardó demasiado en procesarse. Intenta de nuevo.'
+  )
   let texto = ''
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
@@ -190,11 +217,16 @@ const LayoutCSS = () => (
       margin-bottom: 10px;
     }
     .cobranza-dropzone {
-      padding: 14px 10px;
+      padding: 36px 20px;
       margin-bottom: 0;
+      min-height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .cobranza-dropzone .dropzone-text {
-      font-size: 12px;
+      font-size: 14px;
+      text-align: center;
     }
     @media (max-width: 900px) {
       .otdetail-grid { grid-template-columns: 1fr; }
@@ -477,6 +509,10 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
       const texto = await extraerTextoPDF(file)
       const datos = parsearFactura(texto)
 
+      if (!datos.numero_factura && !datos.fecha_emision && !datos.monto_total) {
+        alert('No se pudo extraer ningún dato de este PDF. Puede que el formato sea distinto — completa el formulario a mano.')
+      }
+
       if (datos.ruc_cliente && rucOT && datos.ruc_cliente !== rucOT) {
         setAvisoRuc(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}). Verifica que sea el PDF correcto.`)
       }
@@ -493,6 +529,7 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
       }))
       setEditando(true)
     } catch (err) {
+      console.error('Error leyendo PDF de factura:', err)
       alert('No se pudo leer el PDF: ' + err.message)
     }
     setLeyendoPDF(false)
