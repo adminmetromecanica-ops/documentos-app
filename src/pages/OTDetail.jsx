@@ -94,6 +94,12 @@ function BadgeNoLeidos({ count }) {
   )
 }
 
+function formatFechaObs(fechaIso) {
+  return new Date(fechaIso).toLocaleString('es-PE', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 export default function OTDetail({ profile }) {
   const { otNumber } = useParams()
   const navigate = useNavigate()
@@ -103,6 +109,12 @@ export default function OTDetail({ profile }) {
   const [abriendoId, setAbriendoId] = useState(null)
   const [visor, setVisor] = useState(null) // { titulo, url, extension } | null
   const [noLeidosPorArea, setNoLeidosPorArea] = useState({}) // { laboratorio: 2, comercial: 0, ... }
+
+  // ── Observaciones por área ──
+  const [observaciones, setObservaciones] = useState([]) // de la activeArea
+  const [nuevaObs, setNuevaObs] = useState('')
+  const [guardandoObs, setGuardandoObs] = useState(false)
+  const [resumenObs, setResumenObs] = useState([]) // de TODAS las áreas, para el resumen cross-área
 
   const esGerencia = profile.area === 'gerencia'
 
@@ -162,6 +174,59 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeArea, otNumber])
+
+  // ── Cargar observaciones de la pestaña de área activa ──
+  async function loadObservaciones() {
+    const { data, error } = await supabase
+      .from('observaciones_ot')
+      .select('*')
+      .eq('ot_number', otNumber)
+      .eq('area', activeArea)
+      .order('created_at', { ascending: false })
+    if (!error) setObservaciones(data || [])
+  }
+
+  useEffect(() => {
+    loadObservaciones()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeArea, otNumber])
+
+  // ── Cargar el resumen de TODAS las áreas (no depende de activeArea) ──
+  async function loadResumenObservaciones() {
+    const { data, error } = await supabase
+      .from('observaciones_ot')
+      .select('*')
+      .eq('ot_number', otNumber)
+      .order('created_at', { ascending: false })
+    if (!error) setResumenObs(data || [])
+  }
+
+  useEffect(() => {
+    loadResumenObservaciones()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otNumber])
+
+  async function agregarObservacion() {
+    const texto = nuevaObs.trim()
+    if (!texto) return
+    setGuardandoObs(true)
+    const { error } = await supabase.from('observaciones_ot').insert({
+      ot_number: otNumber,
+      area: activeArea,
+      usuario_id: profile.id,
+      usuario_nombre: profile.full_name || null,
+      texto,
+    })
+    if (error) {
+      alert('No se pudo guardar la observación: ' + error.message)
+    } else {
+      setNuevaObs('')
+      registrarAuditoria(profile.id, 'agregar_observacion', otNumber, `Área: ${activeArea}`)
+      loadObservaciones()
+      loadResumenObservaciones()
+    }
+    setGuardandoObs(false)
+  }
 
   // Cuenta notificaciones no leídas por área, solo para las áreas visibles de este usuario
   async function loadNoLeidos() {
@@ -352,6 +417,75 @@ export default function OTDetail({ profile }) {
             >
               {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
             </button>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Observaciones de la pestaña de área activa ── */}
+      <div className="card">
+        <h4 style={{ marginTop: 0 }}>Observaciones — {configArea.label}</h4>
+
+        {puedeSubir && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+            <textarea
+              value={nuevaObs}
+              onChange={(e) => setNuevaObs(e.target.value)}
+              placeholder={`Escribe una observación o consideración de ${configArea.label} sobre este servicio...`}
+              rows={3}
+              style={{ resize: 'vertical' }}
+            />
+            <button
+              className="btn"
+              style={{ alignSelf: 'flex-start' }}
+              disabled={guardandoObs || !nuevaObs.trim()}
+              onClick={agregarObservacion}
+            >
+              {guardandoObs ? 'Guardando...' : '+ Agregar observación'}
+            </button>
+          </div>
+        )}
+
+        {observaciones.length === 0 && (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aún no hay observaciones de esta área.</p>
+        )}
+        {observaciones.map((o) => (
+          <div key={o.id} className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+            <div style={{ fontSize: 14 }}>{o.texto}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {o.usuario_nombre || '—'} · {formatFechaObs(o.created_at)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Resumen cross-área: SIEMPRE visible, sin importar la pestaña activa ── */}
+      <div className="card">
+        <h4 style={{ marginTop: 0 }}>Resumen de observaciones — todas las áreas</h4>
+        {resumenObs.length === 0 && (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Aún no hay observaciones registradas por ninguna área.</p>
+        )}
+        {resumenObs.map((o) => (
+          <div key={o.id} className="doc-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  color: 'var(--ocean-accent)',
+                  background: 'rgba(45,212,191,0.12)',
+                  borderRadius: 6,
+                  padding: '2px 8px',
+                }}
+              >
+                {AREAS_CONFIG[o.area]?.label || o.area}
+              </span>
+            </div>
+            <div style={{ fontSize: 14 }}>{o.texto}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {o.usuario_nombre || '—'} · {formatFechaObs(o.created_at)}
+            </div>
           </div>
         ))}
       </div>
