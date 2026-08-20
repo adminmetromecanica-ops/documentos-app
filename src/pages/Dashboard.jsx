@@ -32,7 +32,7 @@ export default function Dashboard({ profile, onLogout }) {
         .from('services')
         .select('id, ot_number, client, service_type, status, priority, due_date')
         .order('created_at', { ascending: false })
-        .limit(300)
+        .limit(2000)
       if (!error) setServices(data || [])
       setLoading(false)
     }
