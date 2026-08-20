@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { AREAS_CONFIG, TODAS_LAS_AREAS } from '../lib/areasConfig'
@@ -14,6 +14,20 @@ const VISIBILIDAD_CRUZADA = {
   contabilidad: ['laboratorio', 'logistica', 'comercial'],
 }
 
+// Catálogo de condiciones de pago + etiqueta y días fijos correspondientes.
+// 'personalizado' deja el campo de días editable a mano.
+const CONDICIONES_PAGO = [
+  { value: 'contado', label: 'Contado', dias: 0 },
+  { value: 'credito_15', label: 'Crédito 15 días', dias: 15 },
+  { value: 'credito_30', label: 'Crédito 30 días', dias: 30 },
+  { value: 'credito_60', label: 'Crédito 60 días', dias: 60 },
+  { value: 'personalizado', label: 'Personalizado', dias: null },
+]
+
+// Umbral de "por vencer": días antes del vencimiento a partir de los
+// cuales se marca en amarillo en vez de neutro. Ajustable acá.
+const DIAS_UMBRAL_POR_VENCER = 5
+
 // Registra un evento en el log de auditoría. Falla en silencio: la
 // auditoría nunca debe romper la experiencia de uso de la app.
 async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
@@ -26,6 +40,126 @@ async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
     })
   } catch (e) {
     console.error('No se pudo registrar auditoría:', e)
+  }
+}
+
+function sumarDias(fechaStr, dias) {
+  const d = new Date(fechaStr + 'T00:00:00')
+  d.setDate(d.getDate() + Number(dias || 0))
+  return d.toISOString().split('T')[0]
+}
+
+function diasHasta(fechaStr) {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+  const fecha = new Date(fechaStr + 'T00:00:00')
+  return Math.round((fecha - hoy) / 86400000)
+}
+
+// Calcula el estado visual de la cobranza en base a la fecha de
+// vencimiento y si ya se marcó como cobrada. No depende de la columna
+// `estado` guardada para 'vencido'/'por_vencer' — siempre se recalcula
+// contra la fecha de hoy, así el semáforo nunca queda desactualizado.
+function calcularSemaforo(cobranza) {
+  if (!cobranza) return null
+  if (cobranza.estado === 'cobrado') {
+    return { key: 'cobrado', label: '✅ Cobrado', color: '#4ade80' }
+  }
+  const dias = diasHasta(cobranza.fecha_vencimiento)
+  if (dias < 0) {
+    return { key: 'vencido', label: `⚠ Vencido hace ${Math.abs(dias)} día${Math.abs(dias) !== 1 ? 's' : ''}`, color: '#f87171' }
+  }
+  if (dias <= DIAS_UMBRAL_POR_VENCER) {
+    return { key: 'por_vencer', label: dias === 0 ? '⏰ Vence hoy' : `⏰ Vence en ${dias} día${dias !== 1 ? 's' : ''}`, color: '#facc15' }
+  }
+  return { key: 'pendiente', label: `Pendiente — vence en ${dias} días`, color: '#94a3b8' }
+}
+
+// ── Lector de PDF de facturas (pdf.js cargado desde CDN, sin dependencia npm) ──
+let pdfjsPromise = null
+function cargarPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib)
+  if (!pdfjsPromise) {
+    pdfjsPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+        resolve(window.pdfjsLib)
+      }
+      script.onerror = () => reject(new Error('No se pudo cargar el lector de PDF'))
+      document.head.appendChild(script)
+    })
+  }
+  return pdfjsPromise
+}
+
+async function extraerTextoPDF(file) {
+  const pdfjsLib = await cargarPdfJs()
+  const buf = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise
+  let texto = ''
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    texto += content.items.map((it) => it.str).join(' ') + '\n'
+  }
+  return texto
+}
+
+// Parser de facturas MetroMecánica (formato "Factura Online" / SUNAT).
+// Extrae N° de factura, fechas, forma de pago, monto y detracción.
+// Si el formato de una factura difiere (otro proveedor de facturación),
+// simplemente no encuentra el campo y el usuario lo completa a mano —
+// nunca bloquea, solo ayuda cuando puede.
+function parsearFactura(texto) {
+  const get = (regex) => {
+    const m = texto.match(regex)
+    return m ? m[1].trim() : null
+  }
+  const numLimpio = (s) => (s ? parseFloat(s.replace(/,/g, '')) : null)
+  const toISO = (ddmmaaaa) => {
+    if (!ddmmaaaa) return null
+    const [d, m, y] = ddmmaaaa.split('/')
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+
+  const numero_factura = get(/N[°o]\s*:\s*(F\d{3}-\d+)/i)
+
+  const rucMatch = texto.match(/Cliente\s*:\s*[^\n]+?\s*R\.?U\.?C\.?\s*:\s*(\d+)/i)
+  const ruc_cliente = rucMatch ? rucMatch[1] : null
+
+  const forma_pago_raw = get(/Forma de Pago\s*:\s*(\w+)/i) || ''
+
+  const fecha_emision = toISO(get(/Fecha Emisi[oó]n\s*:\s*(\d{2}\/\d{2}\/\d{4})/i))
+  const fecha_vencimiento = toISO(get(/Fecha Vencto\.?\s*:\s*(\d{2}\/\d{2}\/\d{4})/i))
+
+  const montoCuotaRaw = get(/Monto\s*:\s*S\/\s*([\d,]+\.\d{2})/i)
+  const totalVentaRaw = get(/Total Precio de Venta\s*:\s*S\/\s*([\d,]+\.\d{2})/i)
+  const detraccionRaw = get(/MONTO DE LA DETRACC?I[OÓ]N\s*([\d,]+\.\d{2})/i)
+  const numero_cuenta_detraccion = get(/NUMERO DE CUENTA BANCARIA\s*(?:BN)?\s*:?\s*([\d\-]+)/i)
+
+  const monto_total = numLimpio(totalVentaRaw) ?? numLimpio(montoCuotaRaw)
+  const monto_detraccion = numLimpio(detraccionRaw)
+
+  let dias_credito = 0
+  if (fecha_emision && fecha_vencimiento) {
+    dias_credito = Math.round((new Date(fecha_vencimiento) - new Date(fecha_emision)) / 86400000)
+  }
+
+  let condicion_pago = 'personalizado'
+  if (/contado/i.test(forma_pago_raw) || dias_credito === 0) condicion_pago = 'contado'
+  else if ([15, 30, 60].includes(dias_credito)) condicion_pago = `credito_${dias_credito}`
+
+  return {
+    numero_factura,
+    ruc_cliente,
+    fecha_emision,
+    dias_credito,
+    condicion_pago,
+    monto_total,
+    monto_detraccion,
+    numero_cuenta_detraccion,
   }
 }
 
@@ -187,6 +321,338 @@ function EquiposIngresadosCard({ ingresos }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── Card de Cobranza — solo en la pestaña de Contabilidad ──
+// Registra/edita la factura de la OT con su condición de pago, calcula
+// la fecha de vencimiento de cobranza, y muestra el semáforo de estado.
+// Permite adjuntar el PDF de la factura para autocompletar el formulario.
+// El envío de recordatorios (correo/WhatsApp) se resuelve en n8n aparte;
+// esta card solo captura y refleja los datos que ese workflow consume.
+function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
+  const [cobranza, setCobranza] = useState(null)
+  const [cargando, setCargando] = useState(true)
+  const [editando, setEditando] = useState(false)
+  const [guardando, setGuardando] = useState(false)
+  const [leyendoPDF, setLeyendoPDF] = useState(false)
+  const [avisoRuc, setAvisoRuc] = useState(null)
+  const fileRef = useRef(null)
+  const [form, setForm] = useState({
+    numero_factura: '',
+    fecha_emision: new Date().toISOString().split('T')[0],
+    condicion_pago: 'contado',
+    dias_credito: 0,
+    monto: '',
+    monto_detraccion: '',
+    numero_cuenta_detraccion: '',
+    cliente_correo: '',
+    cliente_telefono: '',
+  })
+
+  async function cargarCobranza() {
+    setCargando(true)
+    const { data, error } = await supabase
+      .from('cobranza')
+      .select('*')
+      .eq('ot_number', otNumber)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!error && data) {
+      setCobranza(data)
+      setForm({
+        numero_factura: data.numero_factura || '',
+        fecha_emision: data.fecha_emision || new Date().toISOString().split('T')[0],
+        condicion_pago: data.condicion_pago || 'contado',
+        dias_credito: data.dias_credito ?? 0,
+        monto: data.monto ?? '',
+        monto_detraccion: data.monto_detraccion ?? '',
+        numero_cuenta_detraccion: data.numero_cuenta_detraccion || '',
+        cliente_correo: data.cliente_correo || '',
+        cliente_telefono: data.cliente_telefono || '',
+      })
+    } else {
+      setCobranza(null)
+    }
+    setCargando(false)
+  }
+
+  useEffect(() => {
+    cargarCobranza()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otNumber])
+
+  function set(k, v) {
+    setForm((prev) => ({ ...prev, [k]: v }))
+  }
+
+  function onChangeCondicion(value) {
+    const cfg = CONDICIONES_PAGO.find((c) => c.value === value)
+    setForm((prev) => ({
+      ...prev,
+      condicion_pago: value,
+      dias_credito: cfg?.dias ?? prev.dias_credito,
+    }))
+  }
+
+  async function handleAdjuntarPDF(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLeyendoPDF(true)
+    setAvisoRuc(null)
+    try {
+      const texto = await extraerTextoPDF(file)
+      const datos = parsearFactura(texto)
+
+      if (datos.ruc_cliente && rucOT && datos.ruc_cliente !== rucOT) {
+        setAvisoRuc(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}). Verifica que sea el PDF correcto.`)
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        numero_factura: datos.numero_factura || prev.numero_factura,
+        fecha_emision: datos.fecha_emision || prev.fecha_emision,
+        condicion_pago: datos.condicion_pago || prev.condicion_pago,
+        dias_credito: datos.dias_credito ?? prev.dias_credito,
+        monto: datos.monto_total ?? prev.monto,
+        monto_detraccion: datos.monto_detraccion ?? prev.monto_detraccion,
+        numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
+      }))
+      setEditando(true)
+    } catch (err) {
+      alert('No se pudo leer el PDF: ' + err.message)
+    }
+    setLeyendoPDF(false)
+    e.target.value = ''
+  }
+
+  async function guardar() {
+    if (!form.numero_factura.trim()) {
+      alert('El número de factura es obligatorio.')
+      return
+    }
+    setGuardando(true)
+    const fecha_vencimiento = sumarDias(form.fecha_emision, form.dias_credito)
+    const payload = {
+      ot_number: otNumber,
+      numero_factura: form.numero_factura.trim(),
+      fecha_emision: form.fecha_emision,
+      condicion_pago: form.condicion_pago,
+      dias_credito: Number(form.dias_credito) || 0,
+      fecha_vencimiento,
+      monto: form.monto === '' ? null : Number(form.monto),
+      monto_detraccion: form.monto_detraccion === '' ? null : Number(form.monto_detraccion),
+      numero_cuenta_detraccion: form.numero_cuenta_detraccion.trim() || null,
+      cliente_correo: form.cliente_correo.trim() || null,
+      cliente_telefono: form.cliente_telefono.trim() || null,
+    }
+
+    let error
+    if (cobranza?.id) {
+      ({ error } = await supabase.from('cobranza').update(payload).eq('id', cobranza.id))
+    } else {
+      ({ error } = await supabase.from('cobranza').insert({ ...payload, creado_por: profile.id, estado: 'pendiente' }))
+    }
+
+    if (error) {
+      alert('No se pudo guardar la cobranza: ' + error.message)
+    } else {
+      registrarAuditoria(profile.id, 'registrar_cobranza', otNumber, `Factura ${payload.numero_factura}`)
+      setEditando(false)
+      setAvisoRuc(null)
+      cargarCobranza()
+    }
+    setGuardando(false)
+  }
+
+  async function marcarCobrado() {
+    if (!cobranza?.id) return
+    if (!confirm(`¿Confirmas que la factura ${cobranza.numero_factura} ya fue cobrada?`)) return
+    const { error } = await supabase
+      .from('cobranza')
+      .update({ estado: 'cobrado', fecha_cobro: new Date().toISOString().split('T')[0] })
+      .eq('id', cobranza.id)
+    if (error) {
+      alert('No se pudo actualizar: ' + error.message)
+    } else {
+      registrarAuditoria(profile.id, 'marcar_cobrado', otNumber, `Factura ${cobranza.numero_factura}`)
+      cargarCobranza()
+    }
+  }
+
+  const semaforo = calcularSemaforo(cobranza)
+  const esPersonalizado = form.condicion_pago === 'personalizado'
+  const montoACobrar = cobranza?.monto != null
+    ? Number(cobranza.monto) - Number(cobranza.monto_detraccion || 0)
+    : null
+
+  if (cargando) {
+    return (
+      <div className="card">
+        <div className="otdetail-section-label">💰 Cobranza</div>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Cargando...</p>
+      </div>
+    )
+  }
+
+  // Sin factura registrada aún y sin permiso de edición: no hay nada que mostrar
+  if (!cobranza && !puedeEditar) {
+    return (
+      <div className="card">
+        <div className="otdetail-section-label">💰 Cobranza</div>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>Aún no se ha registrado factura para esta OT.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div className="otdetail-section-label" style={{ margin: 0 }}>💰 Cobranza</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {cobranza && semaforo && (
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: semaforo.color,
+                background: `${semaforo.color}22`,
+                borderRadius: 20,
+                padding: '3px 12px',
+              }}
+            >
+              {semaforo.label}
+            </span>
+          )}
+          {puedeEditar && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(45,212,191,0.1)', border: '1px solid rgba(45,212,191,0.3)', color: 'var(--ocean-accent)', padding: '5px 11px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              {leyendoPDF ? '⏳ Leyendo...' : '📎 Adjuntar factura PDF'}
+              <input ref={fileRef} type="file" accept=".pdf" onChange={handleAdjuntarPDF} style={{ display: 'none' }} disabled={leyendoPDF} />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {avisoRuc && (
+        <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
+          {avisoRuc}
+        </div>
+      )}
+
+      {cobranza && !editando && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, marginBottom: puedeEditar ? 14 : 0 }}>
+          <div><b>N° Factura:</b> {cobranza.numero_factura}</div>
+          <div><b>Emisión:</b> {cobranza.fecha_emision} · <b>Vencimiento:</b> {cobranza.fecha_vencimiento}</div>
+          <div>
+            <b>Condición:</b> {CONDICIONES_PAGO.find((c) => c.value === cobranza.condicion_pago)?.label || cobranza.condicion_pago}
+            {cobranza.condicion_pago === 'personalizado' && ` (${cobranza.dias_credito} días)`}
+          </div>
+          {cobranza.monto != null && <div><b>Monto factura:</b> S/ {Number(cobranza.monto).toFixed(2)}</div>}
+          {cobranza.monto_detraccion != null && (
+            <div style={{ color: 'var(--text-muted)' }}>
+              <b>Detracción:</b> S/ {Number(cobranza.monto_detraccion).toFixed(2)}
+              {cobranza.numero_cuenta_detraccion && ` · Cta: ${cobranza.numero_cuenta_detraccion}`}
+            </div>
+          )}
+          {montoACobrar != null && (
+            <div style={{ fontWeight: 700, color: 'var(--ocean-accent)' }}>Monto a cobrar: S/ {montoACobrar.toFixed(2)}</div>
+          )}
+          {cobranza.estado === 'cobrado' && cobranza.fecha_cobro && (
+            <div style={{ color: '#4ade80' }}><b>Cobrado el:</b> {cobranza.fecha_cobro}</div>
+          )}
+          {(cobranza.cliente_correo || cobranza.cliente_telefono) && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+              Contacto: {cobranza.cliente_correo || '—'} {cobranza.cliente_telefono ? `· ${cobranza.cliente_telefono}` : ''}
+            </div>
+          )}
+
+          {puedeEditar && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button className="btn btn-secondary" style={{ fontSize: 12, padding: '6px 12px' }} onClick={() => setEditando(true)}>
+                Editar
+              </button>
+              {cobranza.estado !== 'cobrado' && (
+                <button className="btn" style={{ fontSize: 12, padding: '6px 12px' }} onClick={marcarCobrado}>
+                  ✓ Marcar como cobrado
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {puedeEditar && (editando || !cobranza) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div>
+            <label>N° Factura</label>
+            <input value={form.numero_factura} onChange={(e) => set('numero_factura', e.target.value)} placeholder="F001-00123" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label>Fecha de emisión</label>
+              <input type="date" value={form.fecha_emision} onChange={(e) => set('fecha_emision', e.target.value)} />
+            </div>
+            <div>
+              <label>Monto factura (S/)</label>
+              <input type="number" step="0.01" value={form.monto} onChange={(e) => set('monto', e.target.value)} placeholder="0.00" />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: esPersonalizado ? '1fr 1fr' : '1fr', gap: 10 }}>
+            <div>
+              <label>Condición de pago</label>
+              <select value={form.condicion_pago} onChange={(e) => onChangeCondicion(e.target.value)}>
+                {CONDICIONES_PAGO.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+            {esPersonalizado && (
+              <div>
+                <label>Días de crédito</label>
+                <input type="number" min="0" value={form.dias_credito} onChange={(e) => set('dias_credito', e.target.value)} />
+              </div>
+            )}
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+            Vencimiento calculado: <b>{sumarDias(form.fecha_emision, form.dias_credito)}</b>
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label>Monto detracción (S/, opcional)</label>
+              <input type="number" step="0.01" value={form.monto_detraccion} onChange={(e) => set('monto_detraccion', e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label>Cuenta detracción (opcional)</label>
+              <input value={form.numero_cuenta_detraccion} onChange={(e) => set('numero_cuenta_detraccion', e.target.value)} placeholder="00-014-XXXXXX" />
+            </div>
+          </div>
+          {form.monto && form.monto_detraccion && (
+            <p style={{ fontSize: 12, color: 'var(--ocean-accent)', margin: 0, fontWeight: 600 }}>
+              Monto a cobrar: S/ {(Number(form.monto) - Number(form.monto_detraccion)).toFixed(2)}
+            </p>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label>Correo del cliente (para recordatorio)</label>
+              <input value={form.cliente_correo} onChange={(e) => set('cliente_correo', e.target.value)} placeholder="cliente@empresa.com" />
+            </div>
+            <div>
+              <label>Teléfono del cliente (WhatsApp)</label>
+              <input value={form.cliente_telefono} onChange={(e) => set('cliente_telefono', e.target.value)} placeholder="+51 9XX XXX XXX" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" disabled={guardando} onClick={guardar}>
+              {guardando ? 'Guardando...' : cobranza ? 'Guardar cambios' : 'Registrar factura'}
+            </button>
+            {cobranza && (
+              <button className="btn btn-secondary" onClick={() => { setEditando(false); setAvisoRuc(null) }}>Cancelar</button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -480,6 +946,16 @@ export default function OTDetail({ profile }) {
           {/* Solo en Logística: reflejo de solo lectura de los equipos ya registrados en MetroTrack */}
           {activeArea === 'logistica' && (
             <EquiposIngresadosCard ingresos={service?.ingresos} />
+          )}
+
+          {/* Solo en Contabilidad: registro de factura + condición de pago + semáforo de cobranza */}
+          {activeArea === 'contabilidad' && (
+            <CobranzaCard
+              otNumber={otNumber}
+              rucOT={service?.ruc}
+              puedeEditar={puedeSubir}
+              profile={profile}
+            />
           )}
 
           {puedeSubir ? (
