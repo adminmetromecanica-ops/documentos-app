@@ -322,6 +322,7 @@ export default function OTDetail({ profile }) {
           area={activeArea}
           tipos={configArea.tipos}
           userId={profile.id}
+          documentosExistentes={documentos}
           onUploaded={handleUploaded}
         />
       ) : (
