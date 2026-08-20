@@ -68,6 +68,87 @@ function DiaModal({ fecha, items, onClose, navigate }) {
   )
 }
 
+// Buscador global de OT — filtra sobre TODOS los servicios (no solo el
+// mes que se está viendo), por N° OT, cliente o RUC. Usable por
+// cualquier área ya que opera sobre el mismo array `services` que
+// recibe el calendario.
+function BuscadorOT({ services, onSeleccionar }) {
+  const [texto, setTexto] = useState('')
+
+  const resultados = useMemo(() => {
+    const q = texto.trim().toLowerCase()
+    if (q.length < 2) return []
+    return services
+      .filter((s) =>
+        s.ot_number?.toLowerCase().includes(q) ||
+        s.client?.toLowerCase().includes(q) ||
+        s.ruc?.toLowerCase().includes(q)
+      )
+      .slice(0, 8)
+  }, [texto, services])
+
+  return (
+    <div style={{ position: 'relative', marginBottom: 16 }}>
+      <input
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        placeholder="🔍 Buscar OT por número, cliente o RUC..."
+        style={{
+          width: '100%',
+          fontSize: 14,
+          padding: '10px 14px',
+          borderRadius: 8,
+          border: '1px solid var(--border)',
+          background: 'var(--ocean-2, #0f2942)',
+          color: 'var(--text)',
+          outline: 'none',
+        }}
+      />
+      {resultados.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            marginTop: 4,
+            background: 'var(--ocean-2, #0f2942)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            overflow: 'hidden',
+            zIndex: 50,
+            boxShadow: '0 8px 24px rgba(0,0,0,.4)',
+          }}
+        >
+          {resultados.map((s) => (
+            <div
+              key={s.id}
+              onClick={() => { setTexto(''); onSeleccionar(s) }}
+              className="doc-item"
+              style={{ cursor: 'pointer', padding: '10px 14px' }}
+            >
+              <div>
+                <strong style={{ color: colorPrioridad(s.priority) }}>{s.ot_number}</strong>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {s.client}{s.ruc ? ` · RUC: ${s.ruc}` : ''}
+                </div>
+              </div>
+              <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
+                {s.priority}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {texto.trim().length >= 2 && resultados.length === 0 && (
+        <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+          Sin resultados para "{texto}".
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CalendarView({ services }) {
   const [mesActual, setMesActual] = useState(new Date())
   const [diaSeleccionado, setDiaSeleccionado] = useState(null) // { fecha, items } | null
@@ -122,8 +203,26 @@ export default function CalendarView({ services }) {
     setDiaSeleccionado({ fecha: fechaLegible, items })
   }
 
+  // Al seleccionar una OT desde el buscador: si tiene fecha, saltamos al
+  // mes correspondiente y abrimos ese día; si no tiene fecha, vamos
+  // directo al detalle de la OT.
+  function seleccionarDesdeBuscador(servicio) {
+    if (!servicio.due_date) {
+      navigate(`/ot/${servicio.ot_number}`)
+      return
+    }
+    const fecha = new Date(servicio.due_date)
+    setMesActual(new Date(fecha.getFullYear(), fecha.getMonth(), 1))
+    const clave = servicio.due_date.slice(0, 10)
+    const itemsDelDia = services.filter((s) => s.due_date?.slice(0, 10) === clave)
+    const fechaLegible = fecha.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' })
+    setDiaSeleccionado({ fecha: fechaLegible, items: itemsDelDia })
+  }
+
   return (
     <div>
+      <BuscadorOT services={services} onSeleccionar={seleccionarDesdeBuscador} />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <button className="btn btn-secondary" onClick={() => setMesActual(new Date(año, mes - 1, 1))}>&larr;</button>
         <strong style={{ fontSize: 16 }}>{MESES[mes]} {año}</strong>
