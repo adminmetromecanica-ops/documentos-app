@@ -16,7 +16,6 @@ const VISIBILIDAD_CRUZADA = {
 }
 
 // Catálogo de condiciones de pago + etiqueta y días fijos correspondientes.
-// 'personalizado' deja el campo de días editable a mano.
 const CONDICIONES_PAGO = [
   { value: 'contado', label: 'Contado', dias: 0 },
   { value: 'credito_15', label: 'Crédito 15 días', dias: 15 },
@@ -25,12 +24,8 @@ const CONDICIONES_PAGO = [
   { value: 'personalizado', label: 'Personalizado', dias: null },
 ]
 
-// Umbral de "por vencer": días antes del vencimiento a partir de los
-// cuales se marca en amarillo en vez de neutro. Ajustable acá.
 const DIAS_UMBRAL_POR_VENCER = 5
 
-// Registra un evento en el log de auditoría. Falla en silencio: la
-// auditoría nunca debe romper la experiencia de uso de la app.
 async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
   try {
     await supabase.from('log_auditoria').insert({
@@ -56,10 +51,6 @@ function diasHasta(fechaStr) {
   return Math.round((fecha - hoy) / 86400000)
 }
 
-// Calcula el estado visual de la cobranza en base a la fecha de
-// vencimiento y si ya se marcó como cobrada. No depende de la columna
-// `estado` guardada para 'vencido'/'por_vencer' — siempre se recalcula
-// contra la fecha de hoy, así el semáforo nunca queda desactualizado.
 function calcularSemaforo(cobranza) {
   if (!cobranza) return null
   if (cobranza.estado === 'cobrado') {
@@ -75,9 +66,6 @@ function calcularSemaforo(cobranza) {
   return { key: 'pendiente', label: `Pendiente — vence en ${dias} días`, color: '#94a3b8' }
 }
 
-// Envuelve una promesa con un tope de tiempo — si algo se cuelga, esto
-// garantiza que el usuario vea un error en vez de quedarse con el reloj
-// de arena para siempre.
 function conTimeout(promise, ms, mensaje) {
   return Promise.race([
     promise,
@@ -85,12 +73,24 @@ function conTimeout(promise, ms, mensaje) {
   ])
 }
 
-// ── pdf.js cargado desde CDN (sin dependencia npm) — se usa solo para
-// RENDERIZAR la página como imagen, no para extraer texto (las facturas
-// de MetroMecánica no tienen texto seleccionable en el cuerpo, solo en
-// el logo/pie de página — el contenido real es una imagen incrustada).
-// El worker se descarga y se convierte en Blob de mismo origen para
-// evitar que el navegador bloquee la creación del Worker cross-origin.
+// Normaliza un nombre de cliente para comparación tolerante.
+function normalizarNombre(s) {
+  return (s || '')
+    .toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function nombresParecidos(a, b) {
+  const na = normalizarNombre(a)
+  const nb = normalizarNombre(b)
+  if (!na || !nb) return true
+  if (na.includes(nb) || nb.includes(na)) return true
+  return na.split(' ')[0] === nb.split(' ')[0]
+}
+
 let pdfjsPromise = null
 function cargarPdfJs() {
   if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -118,9 +118,6 @@ function cargarPdfJs() {
   return pdfjsPromise
 }
 
-// Renderiza la primera página del PDF como imagen PNG y devuelve solo el
-// base64 (sin el prefijo "data:image/png;base64,"). Escala 2x para que
-// el texto se lea nítido cuando Claude lo analice.
 async function renderizarPrimeraPaginaComoImagen(file) {
   const pdfjsLib = await conTimeout(cargarPdfJs(), 15000, 'No se pudo iniciar el lector de PDF (tiempo de espera agotado).')
   const buf = await file.arrayBuffer()
@@ -140,8 +137,6 @@ async function renderizarPrimeraPaginaComoImagen(file) {
   return dataUrl.split(',')[1]
 }
 
-// Manda la imagen de la factura al webhook de n8n, que la procesa con
-// Claude (visión) y devuelve el JSON con los campos ya extraídos.
 async function leerFacturaConIA(imagenBase64) {
   const resp = await conTimeout(
     fetch(WEBHOOK_URL_LEER_FACTURA, {
@@ -158,12 +153,6 @@ async function leerFacturaConIA(imagenBase64) {
   return await resp.json()
 }
 
-// A partir de los datos que devuelve la IA (numero_factura, ruc_cliente,
-// fecha_emision, fecha_vencimiento, forma_pago, monto_total,
-// monto_detraccion, numero_cuenta_detraccion), deduce la condición de
-// pago y los días de crédito comparando las dos fechas — igual criterio
-// que antes, pero ahora las fechas vienen de un modelo con visión en vez
-// de un regex sobre texto que no existía.
 function deducirCondicionPago(datos) {
   let dias_credito = 0
   if (datos.fecha_emision && datos.fecha_vencimiento) {
@@ -175,9 +164,6 @@ function deducirCondicionPago(datos) {
   return { dias_credito, condicion_pago }
 }
 
-// CSS del layout de dos columnas — con media query para colapsar a una
-// sola columna en pantallas angostas (tablet/mobile). Se define aquí,
-// scoped por nombre de clase, para no tocar index.css global.
 const LayoutCSS = () => (
   <style>{`
     .otdetail-grid {
@@ -220,8 +206,6 @@ const LayoutCSS = () => (
   `}</style>
 )
 
-// Modal embebido: muestra el documento sin salir de la app, con Office Online
-// para Word/Excel/PowerPoint, o directo (iframe/img) para PDF e imágenes.
 function VisorDocumento({ titulo, url, extension, onClose }) {
   const esOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes((extension || '').toLowerCase())
   const src = esOffice
@@ -259,8 +243,6 @@ function VisorDocumento({ titulo, url, extension, onClose }) {
   )
 }
 
-// Modal de diagnóstico: muestra el JSON crudo que devolvió la IA — útil
-// si algún campo sale mal, para ver exactamente qué entendió el modelo.
 function JsonDebugModal({ datos, onClose }) {
   const texto = JSON.stringify(datos, null, 2)
   const [copiado, setCopiado] = useState(false)
@@ -308,7 +290,6 @@ function JsonDebugModal({ datos, onClose }) {
   )
 }
 
-// Pastilla roja con el número de notificaciones no leídas. No se renderiza si count es 0.
 function BadgeNoLeidos({ count }) {
   if (!count) return null
   return (
@@ -340,7 +321,6 @@ function formatFechaObs(fechaIso) {
   })
 }
 
-// ── Card de solo lectura: Equipos Ingresados ──
 function EquiposIngresadosCard({ ingresos }) {
   if (!ingresos || ingresos.length === 0) {
     return (
@@ -394,7 +374,6 @@ function EquiposIngresadosCard({ ingresos }) {
   )
 }
 
-// ── Dropzone de la factura PDF: arrastrar y soltar, o clic para seleccionar ──
 function FacturaDropzone({ onFile, leyendo }) {
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
@@ -453,14 +432,13 @@ function FacturaDropzone({ onFile, leyendo }) {
   )
 }
 
-// ── Card de Cobranza — solo en la pestaña de Contabilidad ──
-function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
+function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
   const [cobranza, setCobranza] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [leyendoPDF, setLeyendoPDF] = useState(false)
-  const [avisoRuc, setAvisoRuc] = useState(null)
+  const [avisos, setAvisos] = useState([])
   const [datosIA, setDatosIA] = useState(null)
   const [mostrarDebug, setMostrarDebug] = useState(false)
   const [form, setForm] = useState({
@@ -471,6 +449,8 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     monto: '',
     monto_detraccion: '',
     numero_cuenta_detraccion: '',
+    moneda: 'PEN',
+    referencia_oc: '',
     cliente_correo: '',
     cliente_telefono: '',
   })
@@ -494,6 +474,8 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         monto: data.monto ?? '',
         monto_detraccion: data.monto_detraccion ?? '',
         numero_cuenta_detraccion: data.numero_cuenta_detraccion || '',
+        moneda: data.moneda || 'PEN',
+        referencia_oc: data.referencia_oc || '',
         cliente_correo: data.cliente_correo || '',
         cliente_telefono: data.cliente_telefono || '',
       })
@@ -527,7 +509,7 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
       return
     }
     setLeyendoPDF(true)
-    setAvisoRuc(null)
+    setAvisos([])
     setDatosIA(null)
     try {
       const imagenBase64 = await renderizarPrimeraPaginaComoImagen(file)
@@ -538,9 +520,17 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         setMostrarDebug(true)
       }
 
+      const nuevosAvisos = []
       if (datos.ruc_cliente && rucOT && datos.ruc_cliente !== rucOT) {
-        setAvisoRuc(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}). Verifica que sea el PDF correcto.`)
+        nuevosAvisos.push(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}).`)
       }
+      if (datos.cliente_nombre && clienteOT && !nombresParecidos(datos.cliente_nombre, clienteOT)) {
+        nuevosAvisos.push(`⚠ El cliente de la factura ("${datos.cliente_nombre}") no se parece al cliente de la OT ("${clienteOT}").`)
+      }
+      if (nuevosAvisos.length > 0) {
+        nuevosAvisos.push('Verifica que sea el PDF correcto para esta OT.')
+      }
+      setAvisos(nuevosAvisos)
 
       const { dias_credito, condicion_pago } = deducirCondicionPago(datos)
 
@@ -553,6 +543,8 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         monto: datos.monto_total ?? prev.monto,
         monto_detraccion: datos.monto_detraccion ?? prev.monto_detraccion,
         numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
+        moneda: datos.moneda || prev.moneda,
+        referencia_oc: datos.referencia_oc || prev.referencia_oc,
       }))
       setEditando(true)
     } catch (err) {
@@ -579,6 +571,8 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
       monto: form.monto === '' ? null : Number(form.monto),
       monto_detraccion: form.monto_detraccion === '' ? null : Number(form.monto_detraccion),
       numero_cuenta_detraccion: form.numero_cuenta_detraccion.trim() || null,
+      moneda: form.moneda || 'PEN',
+      referencia_oc: form.referencia_oc.trim() || null,
       cliente_correo: form.cliente_correo.trim() || null,
       cliente_telefono: form.cliente_telefono.trim() || null,
     }
@@ -595,7 +589,7 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     } else {
       registrarAuditoria(profile.id, 'registrar_cobranza', otNumber, `Factura ${payload.numero_factura}`)
       setEditando(false)
-      setAvisoRuc(null)
+      setAvisos([])
       cargarCobranza()
     }
     setGuardando(false)
@@ -678,9 +672,9 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
         </div>
       )}
 
-      {avisoRuc && (
-        <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
-          {avisoRuc}
+      {avisos.length > 0 && (
+        <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--danger)', marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {avisos.map((a, i) => <span key={i}>{a}</span>)}
         </div>
       )}
 
@@ -692,7 +686,9 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
             <b>Condición:</b> {CONDICIONES_PAGO.find((c) => c.value === cobranza.condicion_pago)?.label || cobranza.condicion_pago}
             {cobranza.condicion_pago === 'personalizado' && ` (${cobranza.dias_credito} días)`}
           </div>
-          {cobranza.monto != null && <div><b>Monto factura:</b> S/ {Number(cobranza.monto).toFixed(2)}</div>}
+          {cobranza.monto != null && (
+            <div><b>Monto factura:</b> {cobranza.moneda === 'USD' ? 'US$' : 'S/'} {Number(cobranza.monto).toFixed(2)}</div>
+          )}
           {cobranza.monto_detraccion != null && (
             <div style={{ color: 'var(--text-muted)' }}>
               <b>Detracción:</b> S/ {Number(cobranza.monto_detraccion).toFixed(2)}
@@ -700,7 +696,12 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
             </div>
           )}
           {montoACobrar != null && (
-            <div style={{ fontWeight: 700, color: 'var(--ocean-accent)' }}>Monto a cobrar: S/ {montoACobrar.toFixed(2)}</div>
+            <div style={{ fontWeight: 700, color: 'var(--ocean-accent)' }}>
+              Monto a cobrar: {cobranza.moneda === 'USD' ? 'US$' : 'S/'} {montoACobrar.toFixed(2)}
+            </div>
+          )}
+          {cobranza.referencia_oc && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>Ref. OC/OS:</b> {cobranza.referencia_oc}</div>
           )}
           {cobranza.estado === 'cobrado' && cobranza.fecha_cobro && (
             <div style={{ color: '#4ade80' }}><b>Cobrado el:</b> {cobranza.fecha_cobro}</div>
@@ -738,8 +739,14 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
               <input type="date" value={form.fecha_emision} onChange={(e) => set('fecha_emision', e.target.value)} />
             </div>
             <div>
-              <label>Monto factura (S/)</label>
-              <input type="number" step="0.01" value={form.monto} onChange={(e) => set('monto', e.target.value)} placeholder="0.00" />
+              <label>Monto factura</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select value={form.moneda} onChange={(e) => set('moneda', e.target.value)} style={{ width: 90, flexShrink: 0 }}>
+                  <option value="PEN">S/</option>
+                  <option value="USD">US$</option>
+                </select>
+                <input type="number" step="0.01" value={form.monto} onChange={(e) => set('monto', e.target.value)} placeholder="0.00" />
+              </div>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: esPersonalizado ? '1fr 1fr' : '1fr', gap: 10 }}>
@@ -761,6 +768,10 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
             Vencimiento calculado: <b>{sumarDias(form.fecha_emision, form.dias_credito)}</b>
           </p>
+          <div>
+            <label>Referencia OC/OS (opcional)</label>
+            <input value={form.referencia_oc} onChange={(e) => set('referencia_oc', e.target.value)} placeholder="P001321 / 260710109" />
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label>Monto detracción (S/, opcional)</label>
@@ -773,7 +784,7 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
           </div>
           {form.monto && form.monto_detraccion && (
             <p style={{ fontSize: 12, color: 'var(--ocean-accent)', margin: 0, fontWeight: 600 }}>
-              Monto a cobrar: S/ {(Number(form.monto) - Number(form.monto_detraccion)).toFixed(2)}
+              Monto a cobrar: {form.moneda === 'USD' ? 'US$' : 'S/'} {(Number(form.monto) - Number(form.monto_detraccion)).toFixed(2)}
             </p>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -791,7 +802,7 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
               {guardando ? 'Guardando...' : cobranza ? 'Guardar cambios' : 'Registrar factura'}
             </button>
             {cobranza && (
-              <button className="btn btn-secondary" onClick={() => { setEditando(false); setAvisoRuc(null) }}>Cancelar</button>
+              <button className="btn btn-secondary" onClick={() => { setEditando(false); setAvisos([]) }}>Cancelar</button>
             )}
           </div>
         </div>
@@ -1080,6 +1091,7 @@ export default function OTDetail({ profile }) {
             <CobranzaCard
               otNumber={otNumber}
               rucOT={service?.ruc}
+              clienteOT={service?.client}
               puedeEditar={puedeSubir}
               profile={profile}
             />
