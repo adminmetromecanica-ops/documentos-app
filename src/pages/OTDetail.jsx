@@ -189,6 +189,13 @@ const LayoutCSS = () => (
       color: var(--ocean-accent);
       margin-bottom: 10px;
     }
+    .cobranza-dropzone {
+      padding: 14px 10px;
+      margin-bottom: 0;
+    }
+    .cobranza-dropzone .dropzone-text {
+      font-size: 12px;
+    }
     @media (max-width: 900px) {
       .otdetail-grid { grid-template-columns: 1fr; }
       .otdetail-sidebar { position: static; top: auto; }
@@ -325,12 +332,75 @@ function EquiposIngresadosCard({ ingresos }) {
   )
 }
 
+// ── Dropzone de la factura PDF: arrastrar y soltar, o clic para seleccionar ──
+// Mismo patrón visual y de eventos que UploadForm.jsx (dragCounter con ref
+// para no perder el estado de "arrastrando" entre los eventos enter/leave
+// de elementos hijos del dropzone).
+function FacturaDropzone({ onFile, leyendo }) {
+  const [isDragging, setIsDragging] = useState(false)
+  const dragCounter = useRef(0)
+  const fileRef = useRef(null)
+
+  function handleDragEnter(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounter.current += 1
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) setIsDragging(true)
+  }
+  function handleDragOver(e) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  function handleDragLeave(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounter.current -= 1
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0
+      setIsDragging(false)
+    }
+  }
+  function handleDrop(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounter.current = 0
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) onFile(file)
+  }
+
+  return (
+    <div
+      className={`dropzone cobranza-dropzone${isDragging ? ' dropzone-dragging' : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onClick={() => !leyendo && fileRef.current?.click()}
+      style={{ cursor: leyendo ? 'wait' : 'pointer' }}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".pdf"
+        onChange={(e) => { if (e.target.files?.[0]) onFile(e.target.files[0]); e.target.value = '' }}
+        style={{ display: 'none' }}
+        disabled={leyendo}
+      />
+      <p className="dropzone-text">
+        {leyendo ? '⏳ Leyendo factura...' : '📎 Arrastra el PDF de la factura aquí, o haz clic para seleccionar'}
+      </p>
+    </div>
+  )
+}
+
 // ── Card de Cobranza — solo en la pestaña de Contabilidad ──
 // Registra/edita la factura de la OT con su condición de pago, calcula
 // la fecha de vencimiento de cobranza, y muestra el semáforo de estado.
-// Permite adjuntar el PDF de la factura para autocompletar el formulario.
-// El envío de recordatorios (correo/WhatsApp) se resuelve en n8n aparte;
-// esta card solo captura y refleja los datos que ese workflow consume.
+// Permite adjuntar el PDF de la factura (arrastrar o clic) para
+// autocompletar el formulario. El envío de recordatorios (correo/WhatsApp)
+// se resuelve en n8n aparte; esta card solo captura y refleja los datos
+// que ese workflow consume.
 function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
   const [cobranza, setCobranza] = useState(null)
   const [cargando, setCargando] = useState(true)
@@ -338,7 +408,6 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
   const [guardando, setGuardando] = useState(false)
   const [leyendoPDF, setLeyendoPDF] = useState(false)
   const [avisoRuc, setAvisoRuc] = useState(null)
-  const fileRef = useRef(null)
   const [form, setForm] = useState({
     numero_factura: '',
     fecha_emision: new Date().toISOString().split('T')[0],
@@ -397,9 +466,11 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     }))
   }
 
-  async function handleAdjuntarPDF(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  async function handleArchivoPDF(file) {
+    if (!file || file.type !== 'application/pdf') {
+      alert('Solo se aceptan archivos PDF.')
+      return
+    }
     setLeyendoPDF(true)
     setAvisoRuc(null)
     try {
@@ -425,7 +496,6 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
       alert('No se pudo leer el PDF: ' + err.message)
     }
     setLeyendoPDF(false)
-    e.target.value = ''
   }
 
   async function guardar() {
@@ -511,29 +581,27 @@ function CobranzaCard({ otNumber, rucOT, puedeEditar, profile }) {
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div className="otdetail-section-label" style={{ margin: 0 }}>💰 Cobranza</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {cobranza && semaforo && (
-            <span
-              style={{
-                fontSize: 12,
-                fontWeight: 700,
-                color: semaforo.color,
-                background: `${semaforo.color}22`,
-                borderRadius: 20,
-                padding: '3px 12px',
-              }}
-            >
-              {semaforo.label}
-            </span>
-          )}
-          {puedeEditar && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(45,212,191,0.1)', border: '1px solid rgba(45,212,191,0.3)', color: 'var(--ocean-accent)', padding: '5px 11px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-              {leyendoPDF ? '⏳ Leyendo...' : '📎 Adjuntar factura PDF'}
-              <input ref={fileRef} type="file" accept=".pdf" onChange={handleAdjuntarPDF} style={{ display: 'none' }} disabled={leyendoPDF} />
-            </label>
-          )}
-        </div>
+        {cobranza && semaforo && (
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: semaforo.color,
+              background: `${semaforo.color}22`,
+              borderRadius: 20,
+              padding: '3px 12px',
+            }}
+          >
+            {semaforo.label}
+          </span>
+        )}
       </div>
+
+      {puedeEditar && (
+        <div style={{ marginBottom: 14 }}>
+          <FacturaDropzone onFile={handleArchivoPDF} leyendo={leyendoPDF} />
+        </div>
+      )}
 
       {avisoRuc && (
         <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
