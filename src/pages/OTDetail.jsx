@@ -26,6 +26,35 @@ const CONDICIONES_PAGO = [
 
 const DIAS_UMBRAL_POR_VENCER = 5
 
+// Íconos por tipo de documento (ajusta o agrega según tus tipos reales)
+const ICONOS_TIPO_DOCUMENTO = {
+  'Certificado': '📜',
+  'Informe': '📊',
+  'Acta de Conformidad': '✅',
+  'Factura': '🧾',
+  'Guía de Remisión': '🚚',
+  'Orden de Compra': '🛒',
+  'Cotización': '💵',
+  'Contrato': '📑',
+  'Sin clasificar': '📄',
+}
+function iconoTipoDocumento(tipo) {
+  return ICONOS_TIPO_DOCUMENTO[tipo] || '📄'
+}
+
+// Agrupa documentos por tipo_documento y ordena por cantidad descendente
+function agruparDocumentosPorTipo(documentos) {
+  const grupos = {}
+  for (const doc of documentos) {
+    const tipo = doc.tipo_documento || 'Sin clasificar'
+    if (!grupos[tipo]) grupos[tipo] = []
+    grupos[tipo].push(doc)
+  }
+  return Object.entries(grupos)
+    .map(([tipo, docs]) => ({ tipo, docs }))
+    .sort((a, b) => b.docs.length - a.docs.length)
+}
+
 async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
   try {
     await supabase.from('log_auditoria').insert({
@@ -199,6 +228,76 @@ const LayoutCSS = () => (
       font-size: 14px;
       text-align: center;
     }
+    .doc-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .doc-group {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.015);
+    }
+    .doc-group-header {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(45,212,191,0.06);
+      border: none;
+      cursor: pointer;
+      color: var(--text-light, #e2e8f0);
+      font-family: inherit;
+      transition: background 0.15s ease;
+    }
+    .doc-group-header:hover {
+      background: rgba(45,212,191,0.12);
+    }
+    .doc-group-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .doc-group-chevron {
+      font-size: 10px;
+      color: var(--ocean-accent);
+      transition: transform 0.2s ease;
+      display: inline-block;
+    }
+    .doc-group-icon {
+      font-size: 15px;
+    }
+    .doc-group-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .doc-group-badge {
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--ocean-accent);
+      color: #06251f;
+      border-radius: 999px;
+      padding: 2px 10px;
+      min-width: 22px;
+      text-align: center;
+    }
+    .doc-group-body {
+      display: grid;
+      transition: grid-template-rows 0.25s ease;
+    }
+    .doc-group-body-inner {
+      overflow: hidden;
+      padding: 0 12px;
+    }
+    .doc-group-body-inner .doc-item {
+      padding: 10px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-group-body-inner .doc-item:last-child {
+      border-bottom: none;
+    }
     @media (max-width: 900px) {
       .otdetail-grid { grid-template-columns: 1fr; }
       .otdetail-sidebar { position: static; top: auto; }
@@ -319,6 +418,85 @@ function formatFechaObs(fechaIso) {
   return new Date(fechaIso).toLocaleString('es-PE', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   })
+}
+
+// Lista de documentos agrupada por tipo, con contador y colapso/expansión
+function DocumentosPorTipo({ documentos, abriendoId, onVer }) {
+  const grupos = agruparDocumentosPorTipo(documentos)
+  const [expandido, setExpandido] = useState(() => {
+    const inicial = {}
+    grupos.forEach((g, i) => { inicial[g.tipo] = i === 0 })
+    return inicial
+  })
+
+  useEffect(() => {
+    const gruposActuales = agruparDocumentosPorTipo(documentos)
+    setExpandido((prev) => {
+      const nuevo = {}
+      gruposActuales.forEach((g, i) => {
+        nuevo[g.tipo] = g.tipo in prev ? prev[g.tipo] : i === 0
+      })
+      return nuevo
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentos])
+
+  function toggle(tipo) {
+    setExpandido((prev) => ({ ...prev, [tipo]: !prev[tipo] }))
+  }
+
+  if (grupos.length === 0) {
+    return <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>
+  }
+
+  return (
+    <div className="doc-groups">
+      {grupos.map((g) => (
+        <div key={g.tipo} className="doc-group">
+          <button className="doc-group-header" onClick={() => toggle(g.tipo)}>
+            <span className="doc-group-header-left">
+              <span
+                className="doc-group-chevron"
+                style={{ transform: expandido[g.tipo] ? 'rotate(90deg)' : 'rotate(0deg)' }}
+              >
+                ▶
+              </span>
+              <span className="doc-group-icon">{iconoTipoDocumento(g.tipo)}</span>
+              <span className="doc-group-title">{g.tipo}</span>
+            </span>
+            <span className="doc-group-badge">{g.docs.length}</span>
+          </button>
+          <div
+            className="doc-group-body"
+            style={{ gridTemplateRows: expandido[g.tipo] ? '1fr' : '0fr' }}
+          >
+            <div className="doc-group-body-inner">
+              {g.docs.map((d) => (
+                <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                      {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
+                      {' · '}
+                      {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
+                    disabled={abriendoId === d.id}
+                    onClick={() => onVer(d)}
+                  >
+                    {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function EquiposIngresadosCard({ ingresos }) {
@@ -1116,27 +1294,7 @@ export default function OTDetail({ profile }) {
 
           <div className="card">
             <div className="otdetail-section-label">Documentos subidos</div>
-            {documentos.length === 0 && <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>}
-            {documentos.map((d) => (
-              <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                    {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
-                    {' · '}
-                    {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
-                  disabled={abriendoId === d.id}
-                  onClick={() => verDocumento(d)}
-                >
-                  {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
-                </button>
-              </div>
-            ))}
+            <DocumentosPorTipo documentos={documentos} abriendoId={abriendoId} onVer={verDocumento} />
           </div>
         </div>
 
