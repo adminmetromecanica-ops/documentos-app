@@ -357,13 +357,18 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceso])
 
-  async function marcarCobrado(c) {
-    if (!confirm(`¿Confirmas que la factura ${c.numero_factura} (OT ${c.ot_number}) ya fue cobrada?`)) return
+  // ── Cambiar el estado de una factura desde la tabla ─────────────────────
+  // Reemplaza el botón "✓ Cobrado" de un solo sentido: ahora se puede ir y
+  // volver entre Pendiente y Cobrado (por si alguien lo marca por error),
+  // sin tener que entrar a la OT.
+  async function actualizarEstado(c, nuevoEstado) {
+    if (nuevoEstado === c.estado) return
+    if (nuevoEstado === 'cobrado' && !confirm(`¿Confirmas que la factura ${c.numero_factura} (OT ${c.ot_number}) ya fue cobrada?`)) return
     setGuardandoId(c.id)
-    const { error } = await supabase
-      .from('cobranza')
-      .update({ estado: 'cobrado', fecha_cobro: hoyISO() })
-      .eq('id', c.id)
+    const payload = nuevoEstado === 'cobrado'
+      ? { estado: 'cobrado', fecha_cobro: hoyISO() }
+      : { estado: 'pendiente', fecha_cobro: null }
+    const { error } = await supabase.from('cobranza').update(payload).eq('id', c.id)
     if (error) {
       alert('No se pudo actualizar: ' + error.message)
     } else {
@@ -709,19 +714,19 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
       {tab === 'facturas' && (
         <>
           {/* ── KPIs globales ── */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-            <KpiCard label="Facturas pendientes" value={kpisGlobales.totalPendientes} sub={fmtMoneda(kpisGlobales.montoPendienteTotal, 'PEN')} />
-            <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#c65b3a" />
-            <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#a97a2e" />
-            <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#a35f27" />
-            <KpiCard label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#7a6f5d" />
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+            <KpiCard compacta label="Facturas pendientes" value={kpisGlobales.totalPendientes} sub={fmtMoneda(kpisGlobales.montoPendienteTotal, 'PEN')} />
+            <KpiCard compacta label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#c65b3a" />
+            <KpiCard compacta label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#a97a2e" />
+            <KpiCard compacta label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#a35f27" />
+            <KpiCard compacta label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#7a6f5d" />
           </div>
 
           {/* ── KPIs del mes seleccionado ── */}
           <div className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
               <div className="otdetail-section-label" style={{ margin: 0 }}>Resumen del mes</div>
-              <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 150 }} />
+              <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 185, minWidth: 185, flexShrink: 0 }} />
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <KpiCard compacta label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
@@ -772,7 +777,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', 'Recordar', ''].map((h) => (
+                      {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', 'Recordar'].map((h) => (
                         <th
                           key={h}
                           style={{
@@ -816,24 +821,25 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                             {fmtMoneda(montoACobrar(c), c.moneda)}
                           </td>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: semaforo.color, background: `${semaforo.color}22`, borderRadius: 20, padding: '3px 10px' }}>
-                              {semaforo.label}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-start' }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: semaforo.color, background: `${semaforo.color}22`, borderRadius: 20, padding: '3px 10px' }}>
+                                {semaforo.label}
+                              </span>
+                              {puedeEditar && (
+                                <select
+                                  value={c.estado}
+                                  disabled={guardandoId === c.id}
+                                  onChange={(e) => actualizarEstado(c, e.target.value)}
+                                  style={{ fontSize: 11, padding: '2px 6px', width: 118 }}
+                                >
+                                  <option value="pendiente">Pendiente</option>
+                                  <option value="cobrado">Cobrado</option>
+                                </select>
+                              )}
+                            </div>
                           </td>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                             {c.estado !== 'cobrado' && <BotonesRecordatorio c={c} cliente={cliente} semaforo={semaforo} contacto={contacto} />}
-                          </td>
-                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                            {puedeEditar && c.estado !== 'cobrado' && (
-                              <button
-                                className="btn btn-secondary"
-                                style={{ fontSize: 11, padding: '4px 10px' }}
-                                disabled={guardandoId === c.id}
-                                onClick={() => marcarCobrado(c)}
-                              >
-                                {guardandoId === c.id ? '...' : '✓ Cobrado'}
-                              </button>
-                            )}
                           </td>
                         </tr>
                       )
