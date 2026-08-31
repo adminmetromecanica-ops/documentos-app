@@ -187,7 +187,8 @@ export default function CalendarView({ services, profile }) {
   const [facturaPorOT, setFacturaPorOT] = useState({})
   const navigate = useNavigate()
 
-  const mostrarFactura = profile?.area === 'contabilidad'
+  // Visible para Contabilidad (dueña del dato) y Gerencia/admin@ (supervisión).
+  const mostrarFactura = ['contabilidad', 'gerencia'].includes(profile?.area)
 
   // Solo Contabilidad necesita este cruce — se evita la consulta para el
   // resto de áreas, que no ven el indicador.
