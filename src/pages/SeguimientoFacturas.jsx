@@ -9,6 +9,7 @@ const AREA_EDITA = 'contabilidad'
 const AREAS_PERMITIDAS = ['contabilidad', 'gerencia']
 
 const DIAS_UMBRAL_POR_VENCER = 7
+const WEBHOOK_URL_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/url-documento"
 
 // Estados de OT en los que ya debería existir una factura (o estar por
 // generarse pronto). Antes de "pendiente-fact" el servicio normalmente aún
@@ -183,14 +184,81 @@ function obtenerContactoEfectivo(c, servicio) {
   }
 }
 
+// ── Mensaje de recordatorio — versión completa ────────────────────────────
+// Se usa siempre (WhatsApp y correo); en el correo, además, se le agregan
+// al final los enlaces de la factura y la OC/proforma si se encuentran
+// documentos subidos para esa OT (ver buscarEnlacesDocumentos).
 function armarMensajeRecordatorio(c, cliente, semaforo) {
   const monto = fmtMoneda(montoACobrar(c), c.moneda)
+  const emision = fmtFecha(c.fecha_emision)
   const vencimiento = fmtFecha(c.fecha_vencimiento)
-  if (semaforo.key === 'vencido') {
-    return `Hola${cliente ? ' ' + cliente : ''}, le escribimos de MetroMecánica respecto a la factura ${c.numero_factura} por ${monto}, cuyo vencimiento fue el ${vencimiento}. Quedamos atentos para coordinar el pago. Gracias.`
-  }
-  return `Hola${cliente ? ' ' + cliente : ''}, le recordamos de MetroMecánica que la factura ${c.numero_factura} por ${monto} vence el ${vencimiento}. Quedamos atentos. Gracias.`
+  const situacion = semaforo.key === 'vencido'
+    ? `cuyo vencimiento fue el ${vencimiento} y a la fecha se encuentra pendiente de pago`
+    : `que vence el ${vencimiento}`
+
+  return [
+    `Estimados ${cliente || 'señores'},`,
+    '',
+    `Por medio del presente, MetroMecánica Ingeniería y Metrología S.A.C. le recuerda la siguiente factura ${situacion}:`,
+    '',
+    `• N° Factura: ${c.numero_factura}`,
+    `• Fecha de emisión: ${emision}`,
+    `• Fecha de vencimiento: ${vencimiento}`,
+    `• Monto a cobrar: ${monto}`,
+    c.referencia_oc ? `• Referencia OC/OS: ${c.referencia_oc}` : null,
+    '',
+    'Quedamos atentos a la coordinación del pago. Cualquier consulta sobre el detalle de la factura, no dude en escribirnos.',
+    '',
+    'Saludos cordiales,',
+    'Área de Contabilidad',
+    'MetroMecánica Ingeniería y Metrología S.A.C.',
+    'RUC: 20605421696',
+  ].filter((l) => l !== null).join('\n')
 }
+
+// ── Busca en `documentos` la factura y la OC/proforma de esta OT ─────────
+// Devuelve enlaces temporales de visualización (no adjuntos: ningún
+// proveedor de correo permite adjuntar un archivo automáticamente desde un
+// enlace — es una restricción de seguridad del navegador). El destinatario
+// hace clic y ve/descarga el archivo directamente.
+async function buscarEnlacesDocumentos(otNumber) {
+  const enlaces = { factura: null, ordenCompra: null }
+  try {
+    const { data: docs, error } = await supabase
+      .from('documentos')
+      .select('ruta_minio, tipo_documento, nombre_archivo, created_at')
+      .eq('ot_number', otNumber)
+      .in('tipo_documento', ['Factura', 'Orden de Compra', 'Cotización'])
+      .order('created_at', { ascending: false })
+    if (error || !docs) return enlaces
+
+    const docFactura = docs.find((d) => d.tipo_documento === 'Factura')
+    const docOC = docs.find((d) => d.tipo_documento === 'Orden de Compra') || docs.find((d) => d.tipo_documento === 'Cotización')
+
+    async function urlDe(doc) {
+      if (!doc?.ruta_minio) return null
+      try {
+        const resp = await fetch(WEBHOOK_URL_DOCUMENTO, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ruta_minio: doc.ruta_minio }),
+        })
+        const data = await resp.json()
+        return data?.url ? { url: data.url, nombre: doc.nombre_archivo, tipo: doc.tipo_documento } : null
+      } catch {
+        return null
+      }
+    }
+
+    const [factura, ordenCompra] = await Promise.all([urlDe(docFactura), urlDe(docOC)])
+    enlaces.factura = factura
+    enlaces.ordenCompra = ordenCompra
+  } catch (e) {
+    console.error('No se pudieron buscar los documentos para el recordatorio:', e)
+  }
+  return enlaces
+}
+
 
 // ── Cuenta desde la que Contabilidad envía los recordatorios ──────────────
 // Hoy en Gmail; cuando migren a Zoho Mail, solo hay que cambiar esta
@@ -215,6 +283,7 @@ function construirLinkCorreo(destinatario, asunto, cuerpo) {
 }
 
 function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
+  const [buscandoDocs, setBuscandoDocs] = useState(false)
   const telefono = normalizarTelefonoWhatsApp(contacto.telefono)
   const correo = contacto.correo
   if (!telefono && !correo) {
@@ -222,13 +291,31 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
   }
   const mensaje = armarMensajeRecordatorio(c, cliente, semaforo)
   const linkWhatsApp = telefono ? `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}` : null
-  const linkCorreo = correo
-    ? construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensaje)
-    : null
+
+  // Al hacer clic: busca la factura y la OC/proforma de esta OT, agrega sus
+  // enlaces al final del mensaje, y recién ahí abre Gmail. Ningún proveedor
+  // de correo permite adjuntar un archivo automáticamente desde un enlace,
+  // así que la vía confiable es incluir el enlace de visualización dentro
+  // del propio texto.
+  async function enviarPorCorreo() {
+    setBuscandoDocs(true)
+    const enlaces = await buscarEnlacesDocumentos(c.ot_number)
+    let mensajeFinal = mensaje
+    const lineasDocs = []
+    if (enlaces.factura) lineasDocs.push(`📄 Factura (${enlaces.factura.nombre}): ${enlaces.factura.url}`)
+    if (enlaces.ordenCompra) lineasDocs.push(`📄 ${enlaces.ordenCompra.tipo} (${enlaces.ordenCompra.nombre}): ${enlaces.ordenCompra.url}`)
+    if (lineasDocs.length > 0) {
+      mensajeFinal += '\n\nDocumentos:\n' + lineasDocs.join('\n')
+    }
+    const link = construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensajeFinal)
+    window.open(link, '_blank', 'noopener,noreferrer')
+    setBuscandoDocs(false)
+  }
+
   const estiloIcono = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     width: 38, height: 38, borderRadius: '50%', fontSize: 20,
-    textDecoration: 'none', color: '#fff', flexShrink: 0,
+    textDecoration: 'none', color: '#fff', flexShrink: 0, border: 'none', cursor: 'pointer',
     boxShadow: '0 2px 6px rgba(0,0,0,0.15)', transition: 'transform 0.15s ease',
   }
   return (
@@ -246,18 +333,17 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
           💬
         </a>
       )}
-      {linkCorreo && (
-        <a
-          href={linkCorreo}
-          target="_blank"
-          rel="noreferrer"
+      {correo && (
+        <button
+          onClick={enviarPorCorreo}
+          disabled={buscandoDocs}
           title={`Enviar recordatorio por correo a ${correo} (Gmail — ${CORREO_REMITENTE_CONTABILIDAD})`}
-          style={{ ...estiloIcono, background: '#3f6ea6' }}
-          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)' }}
+          style={{ ...estiloIcono, background: '#3f6ea6', opacity: buscandoDocs ? 0.7 : 1 }}
+          onMouseEnter={(e) => { if (!buscandoDocs) e.currentTarget.style.transform = 'scale(1.1)' }}
           onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
         >
-          📧
-        </a>
+          {buscandoDocs ? '⏳' : '📧'}
+        </button>
       )}
     </div>
   )
