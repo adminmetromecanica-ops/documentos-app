@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabaseClient'
 
 const MESES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -21,9 +22,37 @@ function diasDeAtraso(due_date) {
   return Math.round((hoy - fecha) / (1000 * 60 * 60 * 24))
 }
 
+// ── Indicador de estado de facturación — solo visible para Contabilidad ──
+// 🟢 cobrada · 🟡 facturada, pendiente de cobro · 🔴 sin factura registrada
+const ESTADO_FACTURA_CFG = {
+  cobrado: { color: '#4ade80', titulo: 'Factura cobrada' },
+  pendiente: { color: '#facc15', titulo: 'Factura registrada — pendiente de cobro' },
+  sin_factura: { color: '#f87171', titulo: 'Sin factura registrada' },
+}
+
+function IndicadorFactura({ estado }) {
+  const cfg = ESTADO_FACTURA_CFG[estado]
+  if (!cfg) return null
+  return (
+    <span
+      title={cfg.titulo}
+      style={{
+        display: 'inline-block',
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: cfg.color,
+        marginRight: 4,
+        flexShrink: 0,
+        boxShadow: `0 0 4px ${cfg.color}`,
+      }}
+    />
+  )
+}
+
 // Modal: muestra TODAS las OT de un día, sin límite — pensado para
 // días con carga alta (10, 15, 30+ servicios).
-function DiaModal({ fecha, items, onClose, navigate }) {
+function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorOT }) {
   return (
     <div
       onClick={onClose}
@@ -54,7 +83,10 @@ function DiaModal({ fecha, items, onClose, navigate }) {
               style={{ cursor: 'pointer', padding: '10px 8px' }}
             >
               <div>
-                <strong style={{ color: colorPrioridad(s.priority) }}>{s.ot_number}</strong>
+                <strong style={{ color: colorPrioridad(s.priority), display: 'flex', alignItems: 'center' }}>
+                  {mostrarFactura && <IndicadorFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
+                  {s.ot_number}
+                </strong>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
               </div>
               <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
@@ -149,10 +181,32 @@ function BuscadorOT({ services, onSeleccionar }) {
   )
 }
 
-export default function CalendarView({ services }) {
+export default function CalendarView({ services, profile }) {
   const [mesActual, setMesActual] = useState(new Date())
   const [diaSeleccionado, setDiaSeleccionado] = useState(null) // { fecha, items } | null
+  const [facturaPorOT, setFacturaPorOT] = useState({})
   const navigate = useNavigate()
+
+  const mostrarFactura = profile?.area === 'contabilidad'
+
+  // Solo Contabilidad necesita este cruce — se evita la consulta para el
+  // resto de áreas, que no ven el indicador.
+  useEffect(() => {
+    if (!mostrarFactura) return
+    async function cargarFacturas() {
+      const { data, error } = await supabase.from('cobranza').select('ot_number, estado')
+      if (error) {
+        console.error('No se pudo cargar estado de facturación:', error)
+        return
+      }
+      const mapa = {}
+      for (const c of data || []) {
+        mapa[c.ot_number] = c.estado === 'cobrado' ? 'cobrado' : 'pendiente'
+      }
+      setFacturaPorOT(mapa)
+    }
+    cargarFacturas()
+  }, [mostrarFactura])
 
   const año = mesActual.getFullYear()
   const mes = mesActual.getMonth()
@@ -229,6 +283,14 @@ export default function CalendarView({ services }) {
         <button className="btn btn-secondary" onClick={() => setMesActual(new Date(año, mes + 1, 1))}>&rarr;</button>
       </div>
 
+      {mostrarFactura && (
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 10, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><IndicadorFactura estado="cobrado" /> Cobrada</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><IndicadorFactura estado="pendiente" /> Facturada — pendiente de cobro</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><IndicadorFactura estado="sin_factura" /> Sin factura registrada</span>
+        </div>
+      )}
+
       <div className="card" style={{ padding: 12 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, marginBottom: 6 }}>
           {DIAS_SEMANA.map((d) => (
@@ -284,7 +346,8 @@ export default function CalendarView({ services }) {
                         lineHeight: 1.2,
                       }}
                     >
-                      <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
+                        {mostrarFactura && <IndicadorFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
                         {s.ot_number}
                       </div>
                       <div style={{ fontSize: 9, opacity: 0.85, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
@@ -314,7 +377,10 @@ export default function CalendarView({ services }) {
         {atrasadas.map((s) => (
           <div key={s.id} className="doc-item" onClick={() => navigate(`/ot/${s.ot_number}`)} style={{ cursor: 'pointer' }}>
             <div>
-              <strong>{s.ot_number}</strong>
+              <strong style={{ display: 'inline-flex', alignItems: 'center' }}>
+                {mostrarFactura && <IndicadorFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
+                {s.ot_number}
+              </strong>
               <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{s.client}</span>
             </div>
             <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 13 }}>
@@ -330,6 +396,8 @@ export default function CalendarView({ services }) {
           items={diaSeleccionado.items}
           onClose={() => setDiaSeleccionado(null)}
           navigate={navigate}
+          mostrarFactura={mostrarFactura}
+          facturaPorOT={facturaPorOT}
         />
       )}
     </div>
