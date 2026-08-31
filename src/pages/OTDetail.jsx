@@ -27,12 +27,35 @@ const CONDICIONES_PAGO = [
 
 const DIAS_UMBRAL_POR_VENCER = 5
 
+// ── Regla de detracción automática (rescatada de FACTUTRACK PRO) ──────────
+// Cód. 037 — Otros Servicios Empresariales — Detracción 12% cuando el monto
+// total supera S/ 700.00. Solo se sugiere si el usuario/IA/XML no trajo ya
+// un valor de detracción; siempre queda editable antes de guardar.
+const DETRACCION_UMBRAL_MONTO = 700
+const DETRACCION_PORCENTAJE_DEFECTO = 12
+
+function sugerirDetraccion(datos) {
+  const monto = Number(datos.monto_total)
+  const moneda = datos.moneda || 'PEN'
+  const yaTieneDetraccion = datos.porcentaje_detraccion != null || datos.monto_detraccion != null
+  if (yaTieneDetraccion || !monto || moneda !== 'PEN' || monto <= DETRACCION_UMBRAL_MONTO) {
+    return { ...datos, _detraccionSugerida: false }
+  }
+  return {
+    ...datos,
+    porcentaje_detraccion: DETRACCION_PORCENTAJE_DEFECTO,
+    monto_detraccion: Number((monto * DETRACCION_PORCENTAJE_DEFECTO / 100).toFixed(2)),
+    _detraccionSugerida: true,
+  }
+}
+
 // Íconos por tipo de documento (ajusta o agrega según tus tipos reales)
 const ICONOS_TIPO_DOCUMENTO = {
   'Certificado': '📜',
   'Informe': '📊',
   'Acta de Conformidad': '✅',
   'Factura': '🧾',
+  'Factura XML': '🗂',
   'Guía de Remisión': '🚚',
   'Orden de Compra': '🛒',
   'Cotización': '💵',
@@ -184,6 +207,101 @@ async function leerFacturaConIA(imagenBase64) {
   return await resp.json()
 }
 
+// ── Parser de XML SUNAT (UBL 2.1) — rescatado de FACTUTRACK PRO ───────────
+// Lee directamente los campos estructurados de la factura electrónica, sin
+// usar IA: gratis, instantáneo y 100% exacto (a diferencia de leer la
+// imagen del PDF). Solo cubre los campos que el estándar UBL garantiza;
+// todo lo demás (detracción, glosa) se deja para revisión manual o para el
+// merge con lo que ya haya traído la IA si también se subió el PDF.
+const NS_CBC = 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2'
+const NS_CAC = 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2'
+
+function textoDirecto(elemento, ns, localName) {
+  if (!elemento) return ''
+  const hijo = Array.from(elemento.children).find((el) => el.localName === localName && el.namespaceURI === ns)
+  return hijo ? hijo.textContent.trim() : ''
+}
+
+function primerPorTagNS(root, ns, localName) {
+  const els = root.getElementsByTagNameNS(ns, localName)
+  return els.length > 0 ? els[0] : null
+}
+
+function parsearXMLFactura(xmlTexto) {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(xmlTexto, 'application/xml')
+  const errorParseo = doc.querySelector('parsererror')
+  if (errorParseo) {
+    throw new Error('El archivo no es un XML válido.')
+  }
+  const root = doc.documentElement
+
+  const numero_factura = textoDirecto(root, NS_CBC, 'ID')
+  const moneda = textoDirecto(root, NS_CBC, 'DocumentCurrencyCode') || 'PEN'
+  const fecha_emision_raw = textoDirecto(root, NS_CBC, 'IssueDate')
+  const fecha_emision = fecha_emision_raw || null
+  const fecha_vencimiento_raw = textoDirecto(root, NS_CBC, 'DueDate')
+
+  const supplierParty = primerPorTagNS(root, NS_CAC, 'AccountingSupplierParty')
+  const supplierPartyIdentification = supplierParty ? primerPorTagNS(supplierParty, NS_CAC, 'PartyIdentification') : null
+  const ruc_emisor = supplierPartyIdentification ? textoDirecto(supplierPartyIdentification, NS_CBC, 'ID') : ''
+  const supplierLegalEntity = supplierParty ? primerPorTagNS(supplierParty, NS_CAC, 'PartyLegalEntity') : null
+  const razon_social_emisor = supplierLegalEntity ? textoDirecto(supplierLegalEntity, NS_CBC, 'RegistrationName') : ''
+
+  const customerParty = primerPorTagNS(root, NS_CAC, 'AccountingCustomerParty')
+  const customerPartyIdentification = customerParty ? primerPorTagNS(customerParty, NS_CAC, 'PartyIdentification') : null
+  const ruc_cliente = customerPartyIdentification ? textoDirecto(customerPartyIdentification, NS_CBC, 'ID') : ''
+  const customerLegalEntity = customerParty ? primerPorTagNS(customerParty, NS_CAC, 'PartyLegalEntity') : null
+  const cliente_nombre = customerLegalEntity ? textoDirecto(customerLegalEntity, NS_CBC, 'RegistrationName') : ''
+
+  const legalMonetaryTotal = primerPorTagNS(root, NS_CAC, 'LegalMonetaryTotal')
+  const valor_venta_raw = legalMonetaryTotal ? textoDirecto(legalMonetaryTotal, NS_CBC, 'LineExtensionAmount') : ''
+  const monto_total_raw = legalMonetaryTotal
+    ? (textoDirecto(legalMonetaryTotal, NS_CBC, 'PayableAmount') || textoDirecto(legalMonetaryTotal, NS_CBC, 'TaxInclusiveAmount'))
+    : ''
+
+  const taxTotal = primerPorTagNS(root, NS_CAC, 'TaxTotal')
+  const igv_raw = taxTotal ? textoDirecto(taxTotal, NS_CBC, 'TaxAmount') : ''
+
+  const orderReference = primerPorTagNS(root, NS_CAC, 'OrderReference')
+  const referencia_oc = orderReference ? textoDirecto(orderReference, NS_CBC, 'ID') : ''
+
+  const paymentTerms = primerPorTagNS(root, NS_CAC, 'PaymentTerms')
+  const paymentMeansId = paymentTerms ? textoDirecto(paymentTerms, NS_CBC, 'PaymentMeansID') : ''
+  let forma_pago = 'contado'
+  if (/credit/i.test(paymentMeansId)) forma_pago = 'credito'
+  else if (fecha_vencimiento_raw && fecha_emision_raw && fecha_vencimiento_raw !== fecha_emision_raw) forma_pago = 'credito'
+
+  const primeraLinea = primerPorTagNS(root, NS_CAC, 'InvoiceLine')
+  const item = primeraLinea ? primerPorTagNS(primeraLinea, NS_CAC, 'Item') : null
+  const glosa = item ? textoDirecto(item, NS_CBC, 'Description') : ''
+
+  return {
+    numero_factura: numero_factura || null,
+    fecha_emision: fecha_emision || null,
+    fecha_vencimiento: fecha_vencimiento_raw || fecha_emision || null,
+    forma_pago,
+    dias_credito: null,
+    moneda,
+    ruc_emisor: ruc_emisor || null,
+    razon_social_emisor: razon_social_emisor || null,
+    ruc_cliente: ruc_cliente || null,
+    cliente_nombre: cliente_nombre || null,
+    direccion_cliente: null,
+    referencia_oc: referencia_oc || null,
+    guia_remision: null,
+    valor_venta: valor_venta_raw ? Number(valor_venta_raw) : null,
+    igv: igv_raw ? Number(igv_raw) : null,
+    monto_total: monto_total_raw ? Number(monto_total_raw) : null,
+    porcentaje_detraccion: null,
+    monto_detraccion: null,
+    numero_cuenta_detraccion: null,
+    codigo_bien_servicio_detraccion: null,
+    glosa: glosa ? glosa.slice(0, 200) : null,
+    observaciones: null,
+  }
+}
+
 function deducirCondicionPago(datos) {
   let dias_credito = 0
   if (datos.fecha_emision && datos.fecha_vencimiento) {
@@ -228,9 +346,16 @@ const LayoutCSS = () => (
       align-items: center;
       justify-content: center;
     }
+    .cobranza-dropzone.compacta {
+      padding: 16px 20px;
+      min-height: 50px;
+    }
     .cobranza-dropzone .dropzone-text {
       font-size: 14px;
       text-align: center;
+    }
+    .cobranza-dropzone.compacta .dropzone-text {
+      font-size: 12.5px;
     }
     .cobranza-subtitle {
       font-size: 10px;
@@ -383,7 +508,7 @@ function JsonDebugModal({ datos, onClose }) {
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
-          <strong style={{ fontSize: 14 }}>Datos extraídos por la IA (diagnóstico)</strong>
+          <strong style={{ fontSize: 14 }}>Datos extraídos (diagnóstico)</strong>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={copiar}>
               {copiado ? '✓ Copiado' : '📋 Copiar'}
@@ -564,7 +689,7 @@ function EquiposIngresadosCard({ ingresos }) {
   )
 }
 
-function FacturaDropzone({ onFile, leyendo }) {
+function FacturaDropzone({ onFile, leyendo, compacta, texto, accept }) {
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
   const fileRef = useRef(null)
@@ -599,7 +724,7 @@ function FacturaDropzone({ onFile, leyendo }) {
 
   return (
     <div
-      className={`dropzone cobranza-dropzone${isDragging ? ' dropzone-dragging' : ''}`}
+      className={`dropzone cobranza-dropzone${compacta ? ' compacta' : ''}${isDragging ? ' dropzone-dragging' : ''}`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -610,14 +735,12 @@ function FacturaDropzone({ onFile, leyendo }) {
       <input
         ref={fileRef}
         type="file"
-        accept=".pdf"
+        accept={accept || '.pdf'}
         onChange={(e) => { if (e.target.files?.[0]) onFile(e.target.files[0]); e.target.value = '' }}
         style={{ display: 'none' }}
         disabled={leyendo}
       />
-      <p className="dropzone-text">
-        {leyendo ? '🤖 Leyendo factura con IA...' : '📎 Arrastra el PDF de la factura aquí, o haz clic para seleccionar'}
-      </p>
+      <p className="dropzone-text">{texto}</p>
     </div>
   )
 }
@@ -628,6 +751,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
   const [editando, setEditando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [leyendoPDF, setLeyendoPDF] = useState(false)
+  const [leyendoXML, setLeyendoXML] = useState(false)
   const [avisos, setAvisos] = useState([])
   const [datosIA, setDatosIA] = useState(null)
   const [mostrarDebug, setMostrarDebug] = useState(false)
@@ -718,34 +842,95 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
     }))
   }
 
-  // ── Sube el PDF de la factura como documento del área Contabilidad ──
-  // Antes, arrastrar la factura solo la enviaba a la IA para leer los datos;
-  // el archivo nunca quedaba guardado en "Documentos subidos". Ahora se sube
-  // en paralelo a MinIO con tipo_documento "Factura", independientemente de
-  // si la lectura con IA tiene éxito o no, y se avisa al padre para refrescar
-  // la lista de documentos de la OT.
-  async function subirFacturaComoDocumento(file) {
+  // ── Sube el archivo de factura (PDF o XML) como documento del área ──────
+  // Contabilidad, en MinIO. Se usa tanto para el PDF como para el XML —
+  // ambos quedan disponibles en "Documentos subidos" con su propio tipo.
+  async function subirDocumentoFactura(file, tipoDocumento, subcarpeta) {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const fd = new FormData()
       fd.append('file', file, file.name)
       fd.append('ot_number', otNumber)
       fd.append('area', 'contabilidad')
-      fd.append('tipo_documento', 'Factura')
-      fd.append('subcarpeta', 'Factura')
+      fd.append('tipo_documento', tipoDocumento)
+      fd.append('subcarpeta', subcarpeta)
       fd.append('nombre_archivo', file.name)
       fd.append('subido_por', user?.id || profile?.id || '')
 
       const resp = await fetch(WEBHOOK_SUBIR_DOCUMENTO, { method: 'POST', body: fd })
       if (!resp.ok) {
-        console.error('Error subiendo factura a MinIO:', await resp.text())
+        console.error(`Error subiendo ${tipoDocumento} a MinIO:`, await resp.text())
         return
       }
       registrarAuditoria(profile.id, 'subir_factura', otNumber, file.name)
       onDocumentoSubido && onDocumentoSubido()
     } catch (e) {
-      console.error('Error subiendo factura a MinIO:', e)
+      console.error(`Error subiendo ${tipoDocumento} a MinIO:`, e)
     }
+  }
+
+  // ── Compara los datos extraídos contra los de la OT y arma avisos ──────
+  function compararConOT(datos) {
+    const nuevosAvisos = []
+    if (datos.ruc_cliente && rucOT && datos.ruc_cliente !== rucOT) {
+      nuevosAvisos.push(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}).`)
+    }
+    if (datos.cliente_nombre && clienteOT && !nombresParecidos(datos.cliente_nombre, clienteOT)) {
+      nuevosAvisos.push(`⚠ El cliente de la factura ("${datos.cliente_nombre}") no se parece al cliente de la OT ("${clienteOT}").`)
+    }
+    if (nuevosAvisos.length > 0) {
+      nuevosAvisos.push('Verifica que sea el documento correcto para esta OT.')
+    }
+    return nuevosAvisos
+  }
+
+  // ── Aplica los datos extraídos (de la IA o del XML) al formulario ─────
+  // Función compartida entre ambos orígenes para que el mapeo de campos no
+  // se desalinee entre uno y otro.
+  function aplicarDatosExtraidos(datosOriginales) {
+    const datos = sugerirDetraccion(datosOriginales)
+    setDatosIA(datos)
+
+    const avisos = compararConOT(datos)
+    if (datos._detraccionSugerida) {
+      avisos.push(
+        `💡 Se sugirió detracción del ${DETRACCION_PORCENTAJE_DEFECTO}% (Cód. 037 — Otros Servicios Empresariales) ` +
+        `por superar S/ ${DETRACCION_UMBRAL_MONTO}. Verifica si aplica antes de guardar.`
+      )
+    }
+    setAvisos(avisos)
+
+    if (!datos.numero_factura && !datos.fecha_emision && !datos.monto_total) {
+      setMostrarDebug(true)
+    }
+
+    const { dias_credito, condicion_pago } = deducirCondicionPago(datos)
+
+    setForm((prev) => ({
+      ...prev,
+      numero_factura: datos.numero_factura || prev.numero_factura,
+      fecha_emision: datos.fecha_emision || prev.fecha_emision,
+      condicion_pago: condicion_pago || prev.condicion_pago,
+      dias_credito: dias_credito ?? prev.dias_credito,
+      monto: datos.monto_total ?? prev.monto,
+      monto_detraccion: datos.monto_detraccion ?? prev.monto_detraccion,
+      numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
+      moneda: datos.moneda || prev.moneda,
+      referencia_oc: datos.referencia_oc || prev.referencia_oc,
+      cliente_nombre: datos.cliente_nombre || prev.cliente_nombre,
+      ruc_emisor: datos.ruc_emisor || prev.ruc_emisor,
+      razon_social_emisor: datos.razon_social_emisor || prev.razon_social_emisor,
+      ruc_cliente: datos.ruc_cliente || prev.ruc_cliente,
+      direccion_cliente: datos.direccion_cliente || prev.direccion_cliente,
+      guia_remision: datos.guia_remision || prev.guia_remision,
+      valor_venta: datos.valor_venta ?? prev.valor_venta,
+      igv: datos.igv ?? prev.igv,
+      porcentaje_detraccion: datos.porcentaje_detraccion ?? prev.porcentaje_detraccion,
+      codigo_bien_servicio_detraccion: datos.codigo_bien_servicio_detraccion || prev.codigo_bien_servicio_detraccion,
+      glosa: datos.glosa || prev.glosa,
+      observaciones: datos.observaciones || prev.observaciones,
+    }))
+    setEditando(true)
   }
 
   async function handleArchivoPDF(file) {
@@ -757,63 +942,42 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
     setAvisos([])
     setDatosIA(null)
 
-    // Subir el documento a la lista de "Documentos subidos" de Contabilidad,
-    // en paralelo a la lectura con IA — no depende de que la IA tenga éxito.
-    subirFacturaComoDocumento(file)
+    // Subir el documento a "Documentos subidos" de Contabilidad, en paralelo
+    // a la lectura con IA — no depende de que la IA tenga éxito.
+    subirDocumentoFactura(file, 'Factura', 'Factura')
 
     try {
       const imagenBase64 = await renderizarPrimeraPaginaComoImagen(file)
       const datos = await leerFacturaConIA(imagenBase64)
-      setDatosIA(datos)
-
-      if (!datos.numero_factura && !datos.fecha_emision && !datos.monto_total) {
-        setMostrarDebug(true)
-      }
-
-      const nuevosAvisos = []
-      if (datos.ruc_cliente && rucOT && datos.ruc_cliente !== rucOT) {
-        nuevosAvisos.push(`⚠ El RUC de la factura (${datos.ruc_cliente}) no coincide con el RUC de la OT (${rucOT}).`)
-      }
-      if (datos.cliente_nombre && clienteOT && !nombresParecidos(datos.cliente_nombre, clienteOT)) {
-        nuevosAvisos.push(`⚠ El cliente de la factura ("${datos.cliente_nombre}") no se parece al cliente de la OT ("${clienteOT}").`)
-      }
-      if (nuevosAvisos.length > 0) {
-        nuevosAvisos.push('Verifica que sea el PDF correcto para esta OT.')
-      }
-      setAvisos(nuevosAvisos)
-
-      const { dias_credito, condicion_pago } = deducirCondicionPago(datos)
-
-      setForm((prev) => ({
-        ...prev,
-        numero_factura: datos.numero_factura || prev.numero_factura,
-        fecha_emision: datos.fecha_emision || prev.fecha_emision,
-        condicion_pago: condicion_pago || prev.condicion_pago,
-        dias_credito: dias_credito ?? prev.dias_credito,
-        monto: datos.monto_total ?? prev.monto,
-        monto_detraccion: datos.monto_detraccion ?? prev.monto_detraccion,
-        numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
-        moneda: datos.moneda || prev.moneda,
-        referencia_oc: datos.referencia_oc || prev.referencia_oc,
-        cliente_nombre: datos.cliente_nombre || prev.cliente_nombre,
-        ruc_emisor: datos.ruc_emisor || prev.ruc_emisor,
-        razon_social_emisor: datos.razon_social_emisor || prev.razon_social_emisor,
-        ruc_cliente: datos.ruc_cliente || prev.ruc_cliente,
-        direccion_cliente: datos.direccion_cliente || prev.direccion_cliente,
-        guia_remision: datos.guia_remision || prev.guia_remision,
-        valor_venta: datos.valor_venta ?? prev.valor_venta,
-        igv: datos.igv ?? prev.igv,
-        porcentaje_detraccion: datos.porcentaje_detraccion ?? prev.porcentaje_detraccion,
-        codigo_bien_servicio_detraccion: datos.codigo_bien_servicio_detraccion || prev.codigo_bien_servicio_detraccion,
-        glosa: datos.glosa || prev.glosa,
-        observaciones: datos.observaciones || prev.observaciones,
-      }))
-      setEditando(true)
+      aplicarDatosExtraidos(datos)
     } catch (err) {
       console.error('Error leyendo factura con IA:', err)
       alert('No se pudo leer la factura: ' + err.message)
     }
     setLeyendoPDF(false)
+  }
+
+  // ── XML SUNAT (opcional) — datos exactos, sin usar IA ──────────────────
+  async function handleArchivoXML(file) {
+    if (!file || !/\.xml$/i.test(file.name)) {
+      alert('Solo se aceptan archivos .xml')
+      return
+    }
+    setLeyendoXML(true)
+    setAvisos([])
+    setDatosIA(null)
+
+    subirDocumentoFactura(file, 'Factura XML', 'Factura_XML')
+
+    try {
+      const texto = await file.text()
+      const datos = parsearXMLFactura(texto)
+      aplicarDatosExtraidos(datos)
+    } catch (err) {
+      console.error('Error leyendo XML de factura:', err)
+      alert('No se pudo leer el XML: ' + err.message)
+    }
+    setLeyendoXML(false)
   }
 
   async function guardar() {
@@ -930,8 +1094,20 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
       </div>
 
       {puedeEditar && (
-        <div style={{ marginBottom: 8 }}>
-          <FacturaDropzone onFile={handleArchivoPDF} leyendo={leyendoPDF} />
+        <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <FacturaDropzone
+            onFile={handleArchivoPDF}
+            leyendo={leyendoPDF}
+            accept=".pdf"
+            texto={leyendoPDF ? '🤖 Leyendo factura con IA...' : '📎 Arrastra el PDF de la factura aquí, o haz clic para seleccionar'}
+          />
+          <FacturaDropzone
+            onFile={handleArchivoXML}
+            leyendo={leyendoXML}
+            compacta
+            accept=".xml"
+            texto={leyendoXML ? '📋 Leyendo XML...' : '📋 (Opcional) Arrastra también el XML SUNAT — datos exactos, sin IA'}
+          />
         </div>
       )}
 
@@ -942,7 +1118,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
             style={{ fontSize: 11, padding: '4px 10px' }}
             onClick={() => setMostrarDebug(true)}
           >
-            🔍 Ver datos extraídos por la IA
+            🔍 Ver datos extraídos
           </button>
         </div>
       )}
@@ -1127,7 +1303,9 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
             <input value={form.referencia_oc} onChange={(e) => set('referencia_oc', e.target.value)} placeholder="P001321 / 260710109" />
           </div>
 
-          <div className="cobranza-subtitle">Detracción (si aplica)</div>
+          <div className="cobranza-subtitle">
+            Detracción — auto-sugerida al {DETRACCION_PORCENTAJE_DEFECTO}% cuando el monto supera S/ {DETRACCION_UMBRAL_MONTO} (Cód. 037)
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label>Porcentaje detracción (%)</label>
@@ -1145,7 +1323,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
             </div>
             <div>
               <label>Código bien/servicio (opcional)</label>
-              <input value={form.codigo_bien_servicio_detraccion} onChange={(e) => set('codigo_bien_servicio_detraccion', e.target.value)} placeholder="Código SUNAT" />
+              <input value={form.codigo_bien_servicio_detraccion} onChange={(e) => set('codigo_bien_servicio_detraccion', e.target.value)} placeholder="037" />
             </div>
           </div>
           {form.monto && form.monto_detraccion && (
