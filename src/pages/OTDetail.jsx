@@ -145,6 +145,17 @@ function nombresParecidos(a, b) {
   return na.split(' ')[0] === nb.split(' ')[0]
 }
 
+// ── Extrae un teléfono del campo libre "Contacto" de la OT ────────────────
+// El campo se llena a mano en Ventas como texto libre (ej: "Juan Pérez —
+// 987 654 321"), así que se busca la secuencia de dígitos más larga (9+)
+// dentro del texto, tolerando espacios, guiones y el prefijo +51.
+function extraerTelefonoDeContacto(contactoTexto) {
+  if (!contactoTexto) return ''
+  const match = contactoTexto.match(/(\+?\d[\d\s-]{7,}\d)/)
+  if (!match) return ''
+  return match[1].replace(/[\s-]/g, '')
+}
+
 let pdfjsPromise = null
 function cargarPdfJs() {
   if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -836,7 +847,7 @@ function FacturaDropzone({ onFile, leyendo, compacta, texto, accept }) {
   )
 }
 
-function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocumentoSubido }) {
+function CobranzaCard({ otNumber, rucOT, clienteOT, contactoOT, correoOT, puedeEditar, profile, onDocumentoSubido }) {
   const [cobranza, setCobranza] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
@@ -882,6 +893,11 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
+    // Contacto de respaldo tomado de la OT (Ventas): correo directo, y
+    // teléfono extraído del campo libre "Contacto". Solo se usa para
+    // rellenar lo que la factura no tenga — nunca pisa un valor ya
+    // guardado, y siempre queda editable.
+    const telefonoDeOT = extraerTelefonoDeContacto(contactoOT)
     if (!error && data) {
       setCobranza(data)
       setForm({
@@ -894,8 +910,8 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
         numero_cuenta_detraccion: data.numero_cuenta_detraccion || '',
         moneda: data.moneda || 'PEN',
         referencia_oc: data.referencia_oc || '',
-        cliente_correo: data.cliente_correo || '',
-        cliente_telefono: data.cliente_telefono || '',
+        cliente_correo: data.cliente_correo || correoOT || '',
+        cliente_telefono: data.cliente_telefono || telefonoDeOT || '',
         cliente_nombre: data.cliente_nombre || '',
         ruc_emisor: data.ruc_emisor || '',
         razon_social_emisor: data.razon_social_emisor || '',
@@ -911,14 +927,36 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
       })
     } else {
       setCobranza(null)
+      // Aún no hay factura registrada: precargamos el contacto de la OT
+      // para que, en cuanto se registre la primera factura, ya venga con
+      // el dato listo (editable) en vez de en blanco.
+      setForm((prev) => ({
+        ...prev,
+        cliente_correo: prev.cliente_correo || correoOT || '',
+        cliente_telefono: prev.cliente_telefono || telefonoDeOT || '',
+      }))
     }
     setCargando(false)
   }
 
+  // ── Resincroniza el contacto desde la OT bajo demanda ──────────────────
+  // Por si Ventas actualizó el contacto después de haber registrado la
+  // factura, o si la IA/XML dejaron el campo vacío al sobrescribir el form.
+  function usarContactoDeOT() {
+    setForm((prev) => ({
+      ...prev,
+      cliente_correo: correoOT || prev.cliente_correo,
+      cliente_telefono: extraerTelefonoDeContacto(contactoOT) || prev.cliente_telefono,
+    }))
+  }
+
   useEffect(() => {
     cargarCobranza()
+    // Se re-ejecuta también cuando llegan correoOT/contactoOT (a veces la OT
+    // termina de cargar un instante después que este componente), para no
+    // quedarse con el contacto en blanco solo por una carrera de timing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otNumber])
+  }, [otNumber, correoOT, contactoOT])
 
   function set(k, v) {
     setForm((prev) => ({ ...prev, [k]: v }))
@@ -1449,7 +1487,20 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
             </p>
           )}
 
-          <div className="cobranza-subtitle">Contacto y Notas</div>
+          <div className="cobranza-subtitle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span>Contacto y Notas</span>
+            {(correoOT || contactoOT) && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: 10, padding: '2px 8px', textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}
+                onClick={usarContactoDeOT}
+                title="Vuelve a traer el correo/teléfono guardados en la OT"
+              >
+                🔄 Usar contacto de la OT
+              </button>
+            )}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label>Correo del cliente (para recordatorio)</label>
@@ -1764,6 +1815,8 @@ export default function OTDetail({ profile }) {
               otNumber={otNumber}
               rucOT={service?.ruc}
               clienteOT={service?.client}
+              contactoOT={service?.contacto}
+              correoOT={service?.correo}
               puedeEditar={puedeSubir}
               profile={profile}
               onDocumentoSubido={loadDocumentos}
