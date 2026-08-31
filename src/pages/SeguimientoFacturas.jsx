@@ -192,6 +192,28 @@ function armarMensajeRecordatorio(c, cliente, semaforo) {
   return `Hola${cliente ? ' ' + cliente : ''}, le recordamos de MetroMecánica que la factura ${c.numero_factura} por ${monto} vence el ${vencimiento}. Quedamos atentos. Gracias.`
 }
 
+// ── Cuenta desde la que Contabilidad envía los recordatorios ──────────────
+// Hoy en Gmail; cuando migren a Zoho Mail, solo hay que cambiar esta
+// constante y el cuerpo de construirLinkCorreo() — nada más en el archivo
+// depende del proveedor.
+const CORREO_REMITENTE_CONTABILIDAD = 'contabilidad@metromecanica.com.pe'
+
+// Abre el compositor web de Gmail directo en el navegador, en vez de un
+// enlace mailto: — así se evita el diálogo de Windows "elige una app" y
+// siempre se compone desde la cuenta de Contabilidad si está logueada en
+// el navegador (parámetro authuser).
+function construirLinkCorreo(destinatario, asunto, cuerpo) {
+  const params = new URLSearchParams({
+    view: 'cm',
+    fs: '1',
+    to: destinatario,
+    su: asunto,
+    body: cuerpo,
+    authuser: CORREO_REMITENTE_CONTABILIDAD,
+  })
+  return `https://mail.google.com/mail/?${params.toString()}`
+}
+
 function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
   const telefono = normalizarTelefonoWhatsApp(contacto.telefono)
   const correo = contacto.correo
@@ -201,7 +223,7 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
   const mensaje = armarMensajeRecordatorio(c, cliente, semaforo)
   const linkWhatsApp = telefono ? `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}` : null
   const linkCorreo = correo
-    ? `mailto:${correo}?subject=${encodeURIComponent(`Recordatorio de pago — Factura ${c.numero_factura}`)}&body=${encodeURIComponent(mensaje)}`
+    ? construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensaje)
     : null
   const estiloIcono = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -227,7 +249,9 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
       {linkCorreo && (
         <a
           href={linkCorreo}
-          title={`Enviar recordatorio por correo a ${correo}`}
+          target="_blank"
+          rel="noreferrer"
+          title={`Enviar recordatorio por correo a ${correo} (Gmail — ${CORREO_REMITENTE_CONTABILIDAD})`}
           style={{ ...estiloIcono, background: '#3f6ea6' }}
           onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)' }}
           onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
