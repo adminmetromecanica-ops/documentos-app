@@ -126,7 +126,7 @@ export default function Dashboard({ profile, onLogout }) {
         </div>
       </div>
 
-      {vista === 'calendario' && <CalendarView services={filtered} />}
+      {vista === 'calendario' && <CalendarView services={filtered} profile={profile} />}
 
       {vista === 'lista' && (
         <>
