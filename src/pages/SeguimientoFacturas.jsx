@@ -538,7 +538,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           --ocean-accent: #4c8a63;
           --border: #e6d4ac;
           --text: #2b241b;
-          --text-muted: #7a6f5d;
+          --text-muted: #5c5040;
           --danger: #c65b3a;
         }
         .seguimiento-tema-calido .card {
@@ -574,6 +574,42 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
         .seguimiento-tema-calido input,
         .seguimiento-tema-calido select {
           border-radius: 10px;
+        }
+        /* ── Refuerzo de contraste ──────────────────────────────────────
+           Varios elementos (títulos, botones secundarios, encabezados de
+           tabla, "Salir") toman su color de la hoja de estilos global de
+           la app (pensada para fondo oscuro) y no de la variable --text
+           que sobreescribimos arriba. Se fuerza el color aquí para
+           garantizar buen contraste sin depender de esa cascada — clave
+           para el personal con miopía. */
+        .seguimiento-tema-calido h1,
+        .seguimiento-tema-calido h2,
+        .seguimiento-tema-calido h3,
+        .seguimiento-tema-calido h4,
+        .seguimiento-tema-calido strong {
+          color: #241d13 !important;
+        }
+        .seguimiento-tema-calido p,
+        .seguimiento-tema-calido label,
+        .seguimiento-tema-calido th {
+          color: #5c5040 !important;
+        }
+        .seguimiento-tema-calido .link-back {
+          color: #2e5c3f !important;
+          font-weight: 700;
+        }
+        .seguimiento-tema-calido .btn-secondary {
+          color: #3a3021 !important;
+          font-weight: 700;
+        }
+        .seguimiento-tema-calido input::placeholder {
+          color: #8c8069 !important;
+        }
+        .seguimiento-tema-calido td {
+          color: #2e2718;
+        }
+        .seguimiento-tema-calido a {
+          color: #2e5c3f;
         }
       `}</style>
       <FondoInteractivoCalido />
