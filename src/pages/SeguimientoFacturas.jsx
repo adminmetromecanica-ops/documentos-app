@@ -69,6 +69,70 @@ function mesActualValue() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+const MESES_LABEL = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+// ── Resumen Mensual (año completo) — rescatado de FACTUTRACK PRO ──────────
+// Reproduce las mismas columnas y fórmulas de la hoja "RESUMEN MENSUAL":
+// NETO = MONTO - DETRACCIÓN (lo que corresponde descontando la detracción)
+// SALDO = MONTO - COBRADO (lo que falta cobrar en total, sin descontar
+// detracción, tal como lo calculaba el Excel original).
+function calcularResumenMensual(cobranzas, anio) {
+  return MESES_LABEL.map((label, idx) => {
+    const filas = cobranzas.filter((c) => {
+      if (!c.fecha_emision) return false
+      const d = new Date(c.fecha_emision + 'T00:00:00')
+      return d.getFullYear() === anio && d.getMonth() === idx
+    })
+    const montoTotal = filas.reduce((acc, c) => acc + Number(c.monto || 0), 0)
+    const baseImponible = filas.reduce((acc, c) => acc + Number(c.valor_venta ?? (c.monto || 0) - (c.igv || 0)), 0)
+    const igv = filas.reduce((acc, c) => acc + Number(c.igv || 0), 0)
+    const detraccion = filas.reduce((acc, c) => acc + Number(c.monto_detraccion || 0), 0)
+    const cobrado = filas.filter((c) => c.estado === 'cobrado').reduce((acc, c) => acc + Number(c.monto || 0), 0)
+    return {
+      mes: label,
+      facturas: filas.length,
+      montoTotal,
+      baseImponible,
+      igv,
+      detraccion,
+      neto: montoTotal - detraccion,
+      cobrado,
+      saldo: montoTotal - cobrado,
+    }
+  })
+}
+
+// ── Resumen Anual (histórico completo) ────────────────────────────────────
+function calcularResumenAnual(cobranzas) {
+  const porAnio = {}
+  cobranzas.forEach((c) => {
+    if (!c.fecha_emision) return
+    const anio = new Date(c.fecha_emision + 'T00:00:00').getFullYear()
+    if (!porAnio[anio]) porAnio[anio] = []
+    porAnio[anio].push(c)
+  })
+  return Object.entries(porAnio)
+    .sort((a, b) => Number(b[0]) - Number(a[0]))
+    .map(([anio, filas]) => {
+      const montoTotal = filas.reduce((acc, c) => acc + Number(c.monto || 0), 0)
+      const baseImponible = filas.reduce((acc, c) => acc + Number(c.valor_venta ?? (c.monto || 0) - (c.igv || 0)), 0)
+      const igv = filas.reduce((acc, c) => acc + Number(c.igv || 0), 0)
+      const detraccion = filas.reduce((acc, c) => acc + Number(c.monto_detraccion || 0), 0)
+      const cobrado = filas.filter((c) => c.estado === 'cobrado').reduce((acc, c) => acc + Number(c.monto || 0), 0)
+      return {
+        anio: Number(anio),
+        facturas: filas.length,
+        montoTotal,
+        baseImponible,
+        igv,
+        detraccion,
+        neto: montoTotal - detraccion,
+        cobrado,
+        saldo: montoTotal - cobrado,
+      }
+    })
+}
+
 function KpiCard({ label, value, sub, color }) {
   return (
     <div className="card" style={{ flex: 1, minWidth: 150 }}>
@@ -146,7 +210,8 @@ function BotonesRecordatorio({ c, cliente, semaforo }) {
 
 export default function SeguimientoFacturas({ profile, onLogout }) {
   const navigate = useNavigate()
-  const [tab, setTab] = useState('facturas') // 'facturas' | 'sin_factura'
+  const [tab, setTab] = useState('facturas') // 'facturas' | 'sin_factura' | 'reportes'
+  const [anioReportes, setAnioReportes] = useState(new Date().getFullYear())
   const [cobranzas, setCobranzas] = useState([])
   const [servicios, setServicios] = useState([])
   const [clientesPorOT, setClientesPorOT] = useState({})
@@ -342,6 +407,40 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     URL.revokeObjectURL(url)
   }
 
+  const resumenMensualAnio = useMemo(() => calcularResumenMensual(cobranzas, anioReportes), [cobranzas, anioReportes])
+  const resumenAnual = useMemo(() => calcularResumenAnual(cobranzas), [cobranzas])
+  const aniosDisponibles = useMemo(() => {
+    const anios = new Set(resumenAnual.map((r) => r.anio))
+    anios.add(new Date().getFullYear())
+    return Array.from(anios).sort((a, b) => b - a)
+  }, [resumenAnual])
+
+  function exportarResumenMensualCSV() {
+    const cols = ['Mes', 'Facturas', 'Monto Total', 'Base Imponible', 'IGV', 'Detracción', 'Neto', 'Cobrado', 'Saldo']
+    const filas = resumenMensualAnio.map((r) => [r.mes, r.facturas, r.montoTotal.toFixed(2), r.baseImponible.toFixed(2), r.igv.toFixed(2), r.detraccion.toFixed(2), r.neto.toFixed(2), r.cobrado.toFixed(2), r.saldo.toFixed(2)])
+    const csv = [cols, ...filas].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Resumen_Mensual_${anioReportes}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function exportarResumenAnualCSV() {
+    const cols = ['Año', 'Facturas', 'Monto Total', 'Base Imponible', 'IGV', 'Detracción', 'Neto', 'Cobrado', 'Saldo']
+    const filas = resumenAnual.map((r) => [r.anio, r.facturas, r.montoTotal.toFixed(2), r.baseImponible.toFixed(2), r.igv.toFixed(2), r.detraccion.toFixed(2), r.neto.toFixed(2), r.cobrado.toFixed(2), r.saldo.toFixed(2)])
+    const csv = [cols, ...filas].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Resumen_Anual.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (!acceso) {
     return (
       <div className="container" style={{ maxWidth: 600, margin: '80px auto', textAlign: 'center' }}>
@@ -401,6 +500,17 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
               {otsSinFacturaUrgentes.length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setTab('reportes')}
+          style={{
+            padding: '10px 18px', border: 'none', background: 'transparent', cursor: 'pointer',
+            fontWeight: 700, fontSize: 13,
+            color: tab === 'reportes' ? 'var(--ocean-accent)' : 'var(--text-muted)',
+            borderBottom: `2px solid ${tab === 'reportes' ? 'var(--ocean-accent)' : 'transparent'}`,
+          }}
+        >
+          📊 Reportes IGV / Anual
         </button>
       </div>
 
@@ -622,6 +732,101 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                           </tr>
                         )
                       })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {tab === 'reportes' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <strong style={{ fontSize: 14 }}>IGV & Detracciones — Resumen Mensual</strong>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                Calculado según la fecha de emisión de cada factura.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <select value={anioReportes} onChange={(e) => setAnioReportes(Number(e.target.value))} style={{ width: 110 }}>
+                {aniosDisponibles.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <button className="btn btn-secondary" onClick={exportarResumenMensualCSV}>⬇ CSV</button>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 24 }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    {['Mes', 'Facturas', 'Monto Total', 'Base Imponible', 'IGV', 'Detracción', 'Neto', 'Cobrado', 'Saldo'].map((h) => (
+                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {resumenMensualAnio.map((r) => (
+                    <tr key={r.mes} style={{ opacity: r.facturas === 0 ? 0.45 : 1 }}>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontWeight: 700 }}>{r.mes}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{r.facturas}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.montoTotal, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.baseImponible, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#a78bfa' }}>{fmtMoneda(r.igv, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#f97316' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.neto, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#4ade80' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#f87171' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <strong style={{ fontSize: 14 }}>Resumen Anual (histórico)</strong>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                Totales acumulados por año, desde que hay facturas registradas.
+              </p>
+            </div>
+            <button className="btn btn-secondary" onClick={exportarResumenAnualCSV}>⬇ CSV</button>
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {resumenAnual.length === 0 ? (
+              <p style={{ padding: 16, color: 'var(--text-muted)' }}>Aún no hay facturas registradas.</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {['Año', 'Facturas', 'Monto Total', 'Base Imponible', 'IGV', 'Detracción', 'Neto', 'Cobrado', 'Saldo'].map((h) => (
+                        <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resumenAnual.map((r) => (
+                      <tr key={r.anio}>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontWeight: 700 }}>{r.anio}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{r.facturas}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.montoTotal, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.baseImponible, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#a78bfa' }}>{fmtMoneda(r.igv, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#f97316' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.neto, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#4ade80' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#f87171' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
