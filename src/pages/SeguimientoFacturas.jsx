@@ -36,17 +36,17 @@ function diasHasta(fechaStr) {
 
 function calcularSemaforo(c) {
   if (c.estado === 'cobrado') {
-    return { key: 'cobrado', label: '✅ Cobrado', color: '#6fa87c' }
+    return { key: 'cobrado', label: '✅ Cobrado', color: '#4c8a63' }
   }
   const dias = diasHasta(c.fecha_vencimiento)
-  if (dias == null) return { key: 'sin_fecha', label: '— Sin fecha', color: '#a89f91' }
+  if (dias == null) return { key: 'sin_fecha', label: '— Sin fecha', color: '#7a6f5d' }
   if (dias < 0) {
-    return { key: 'vencido', label: `⚠ Vencida hace ${Math.abs(dias)}d`, color: '#d9704f' }
+    return { key: 'vencido', label: `⚠ Vencida hace ${Math.abs(dias)}d`, color: '#c65b3a' }
   }
   if (dias <= DIAS_UMBRAL_POR_VENCER) {
-    return { key: 'por_vencer', label: dias === 0 ? '⏰ Vence hoy' : `⏰ Vence en ${dias}d`, color: '#e0a458' }
+    return { key: 'por_vencer', label: dias === 0 ? '⏰ Vence hoy' : `⏰ Vence en ${dias}d`, color: '#a97a2e' }
   }
-  return { key: 'pendiente', label: 'Pendiente', color: '#a89f91' }
+  return { key: 'pendiente', label: 'Pendiente', color: '#7a6f5d' }
 }
 
 function montoACobrar(c) {
@@ -204,6 +204,79 @@ function BotonesRecordatorio({ c, cliente, semaforo }) {
           📧
         </a>
       )}
+    </div>
+  )
+}
+
+// ── Fondo animado cálido — hojas flotando con parallax al mover el mouse ──
+// Puramente decorativo: pointerEvents 'none' y z-index negativo para que
+// nunca interfiera con clics ni tape el texto (opacidad baja, 22-30%).
+function FondoInteractivoCalido() {
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+
+  useEffect(() => {
+    function onMove(e) {
+      setOffset({
+        x: (e.clientX / window.innerWidth - 0.5) * 2,
+        y: (e.clientY / window.innerHeight - 0.5) * 2,
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
+
+  const hojas = useMemo(() => ([
+    { emoji: '🍃', top: '10%', left: '6%', size: 34, dur: 14, delay: 0, depth: 14 },
+    { emoji: '🍂', top: '20%', left: '85%', size: 28, dur: 18, delay: 2, depth: 22 },
+    { emoji: '🌿', top: '55%', left: '4%', size: 30, dur: 16, delay: 1, depth: 10 },
+    { emoji: '🍃', top: '72%', left: '92%', size: 26, dur: 20, delay: 3, depth: 26 },
+    { emoji: '🌾', top: '38%', left: '50%', size: 24, dur: 22, delay: 1.5, depth: 18 },
+    { emoji: '🍂', top: '86%', left: '35%', size: 30, dur: 17, delay: 2.5, depth: 12 },
+    { emoji: '🌿', top: '4%', left: '58%', size: 22, dur: 19, delay: 0.5, depth: 20 },
+  ]), [])
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: -1, overflow: 'hidden', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(160deg, #fff8ec 0%, #fdf1da 55%, #fbe8ce 100%)' }} />
+      <div style={{
+        position: 'absolute', top: '-10%', left: '-5%', width: 420, height: 420, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(169,122,46,0.25), transparent 70%)',
+        filter: 'blur(10px)', animation: 'respiroSuave 9s ease-in-out infinite',
+        transform: `translate(${offset.x * 16}px, ${offset.y * 16}px)`,
+      }} />
+      <div style={{
+        position: 'absolute', bottom: '-15%', right: '-8%', width: 520, height: 520, borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(76,138,99,0.22), transparent 70%)',
+        filter: 'blur(14px)', animation: 'respiroSuave 11s ease-in-out 1.5s infinite',
+        transform: `translate(${offset.x * -20}px, ${offset.y * -20}px)`,
+      }} />
+      {hojas.map((h, i) => (
+        <div
+          key={i}
+          style={{
+            position: 'absolute', top: h.top, left: h.left,
+            transform: `translate(${offset.x * h.depth}px, ${offset.y * h.depth}px)`,
+            transition: 'transform 0.4s ease-out',
+          }}
+        >
+          <div style={{ fontSize: h.size, opacity: 0.3, animation: `flotarHoja ${h.dur}s ease-in-out ${h.delay}s infinite` }}>
+            {h.emoji}
+          </div>
+        </div>
+      ))}
+      <style>{`
+        @keyframes flotarHoja {
+          0%, 100% { transform: translateY(0) rotate(0deg); }
+          50% { transform: translateY(-26px) rotate(8deg); }
+        }
+        @keyframes respiroSuave {
+          0%, 100% { opacity: 0.6; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.08); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .seguimiento-tema-calido [style*="animation"] { animation: none !important; }
+        }
+      `}</style>
     </div>
   )
 }
@@ -454,7 +527,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   }
 
   return (
-    <div className="container container-ancho seguimiento-tema-calido" style={{ maxWidth: 1300, margin: '0 auto' }}>
+    <div className="container container-ancho seguimiento-tema-calido" style={{ maxWidth: 1300, margin: '0 auto', position: 'relative', minHeight: '100vh' }}>
       <style>{`
         /* ── Acento cálido solo para esta pantalla ──────────────────────
            No se toca el fondo oscuro base ni ninguna otra página: estos
@@ -462,16 +535,28 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
            ningún otro lugar de la app, así que no hay riesgo de que se
            filtren a Portal, Dashboard, OTDetail, etc. */
         .seguimiento-tema-calido {
-          --ocean-accent: #6fa87c;
+          --ocean-accent: #4c8a63;
+          --border: #e6d4ac;
+          --text: #2b241b;
+          --text-muted: #7a6f5d;
+          --danger: #c65b3a;
         }
         .seguimiento-tema-calido .card {
           border-radius: 16px;
-          border-color: rgba(224, 164, 88, 0.22);
-          background: linear-gradient(180deg, rgba(224, 164, 88, 0.05), rgba(111, 168, 122, 0.02));
+          border-color: rgba(169, 122, 46, 0.28);
+          background: rgba(255, 250, 240, 0.82);
+          backdrop-filter: blur(2px);
+          color: #2b241b;
+        }
+        .seguimiento-tema-calido input,
+        .seguimiento-tema-calido select {
+          background: rgba(255, 253, 247, 0.9);
+          color: #2b241b;
+          border-color: rgba(169, 122, 46, 0.3);
         }
         .seguimiento-tema-calido .btn {
-          background: #6fa87c;
-          color: #0f2016;
+          background: #4c8a63;
+          color: #fff8ec;
           border-radius: 10px;
           border: none;
         }
@@ -491,6 +576,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           border-radius: 10px;
         }
       `}</style>
+      <FondoInteractivoCalido />
       <div className="top-bar" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al panel</a>
@@ -530,7 +616,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           🚫 OTs sin factura
           {otsSinFacturaUrgentes.length > 0 && (
             <span style={{
-              fontSize: 11, fontWeight: 700, background: '#d9704f', color: '#1a0505',
+              fontSize: 11, fontWeight: 700, background: '#c65b3a', color: '#1a0505',
               borderRadius: 999, padding: '1px 7px', minWidth: 18, textAlign: 'center',
             }}>
               {otsSinFacturaUrgentes.length}
@@ -555,10 +641,10 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           {/* ── KPIs globales ── */}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
             <KpiCard label="Facturas pendientes" value={kpisGlobales.totalPendientes} sub={fmtMoneda(kpisGlobales.montoPendienteTotal, 'PEN')} />
-            <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#d9704f" />
-            <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#e0a458" />
-            <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#c97a3f" />
-            <KpiCard label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#a89f91" />
+            <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#c65b3a" />
+            <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#a97a2e" />
+            <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#a35f27" />
+            <KpiCard label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#7a6f5d" />
           </div>
 
           {/* ── KPIs del mes seleccionado ── */}
@@ -570,9 +656,9 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <KpiCard label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
               <KpiCard label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
-              <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#b58ea0" />
-              <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#c97a3f" />
-              <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#6fa87c" />
+              <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#8a5b72" />
+              <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#a35f27" />
+              <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#4c8a63" />
             </div>
           </div>
 
@@ -695,7 +781,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
               label="Deberían tener factura ya"
               value={otsSinFacturaUrgentes.length}
               sub="Estado: Pend. Facturación o Concluido"
-              color="#d9704f"
+              color="#c65b3a"
             />
           </div>
 
@@ -760,7 +846,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                             <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(s.due_date)}</td>
                             <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                               {urge && (
-                                <span style={{ fontSize: 11, fontWeight: 700, color: '#d9704f', background: '#d9704f22', borderRadius: 20, padding: '3px 10px' }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#c65b3a', background: '#c65b3a22', borderRadius: 20, padding: '3px 10px' }}>
                                   🚫 Falta subir
                                 </span>
                               )}
@@ -812,11 +898,11 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{r.facturas}</td>
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.montoTotal, 'PEN')}</td>
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.baseImponible, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#b58ea0' }}>{fmtMoneda(r.igv, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#c97a3f' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#8a5b72' }}>{fmtMoneda(r.igv, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#a35f27' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.neto, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#6fa87c' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#d9704f' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#4c8a63' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#c65b3a' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -856,11 +942,11 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{r.facturas}</td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.montoTotal, 'PEN')}</td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.baseImponible, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#b58ea0' }}>{fmtMoneda(r.igv, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#c97a3f' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#8a5b72' }}>{fmtMoneda(r.igv, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#a35f27' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.neto, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#6fa87c' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#d9704f' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#4c8a63' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#c65b3a' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
                       </tr>
                     ))}
                   </tbody>
