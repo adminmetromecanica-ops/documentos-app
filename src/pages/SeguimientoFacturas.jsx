@@ -228,12 +228,14 @@ async function buscarEnlacesDocumentos(otNumber) {
       .from('documentos')
       .select('ruta_minio, tipo_documento, nombre_archivo, created_at')
       .eq('ot_number', otNumber)
-      .in('tipo_documento', ['Factura', 'Orden de Compra', 'Cotización'])
+      .in('tipo_documento', ['Factura', 'Orden de Compra', 'Cotización', 'Proforma'])
       .order('created_at', { ascending: false })
     if (error || !docs) return enlaces
 
     const docFactura = docs.find((d) => d.tipo_documento === 'Factura')
-    const docOC = docs.find((d) => d.tipo_documento === 'Orden de Compra') || docs.find((d) => d.tipo_documento === 'Cotización')
+    const docOC = docs.find((d) => d.tipo_documento === 'Orden de Compra')
+      || docs.find((d) => d.tipo_documento === 'Proforma')
+      || docs.find((d) => d.tipo_documento === 'Cotización')
 
     async function urlDe(doc) {
       if (!doc?.ruta_minio) return null
@@ -330,17 +332,14 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto, onAbrirCorreo }) 
 // ── Modal de recordatorio por correo — vive dentro de la plataforma ──────
 // En vez de saltar directo a una pestaña de Gmail, muestra el mensaje (ya
 // editable) y los documentos encontrados, para revisar antes de enviar.
-// "Abrir en Gmail" solo se dispara cuando la persona lo pide explícitamente.
+// "Abrir en Gmail" es un <a> real (no window.open): así el navegador nunca
+// lo trata como pop-up y siempre navega, sin importar el navegador.
 function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje }) {
   const { c, correo, mensaje, cargandoDocs, documentos } = datos
+  const linkGmail = construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensaje)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
-  }
-
-  function abrirGmail() {
-    const link = construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensaje)
-    window.open(link, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -351,57 +350,65 @@ function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje }) {
       <div
         onClick={(e) => e.stopPropagation()}
         className="card"
-        style={{ width: '100%', maxWidth: 620, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
+        style={{ width: '100%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
       >
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong style={{ fontSize: 15 }}>📧 Recordatorio — Factura {c.numero_factura}</strong>
+        <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <strong style={{ fontSize: 16 }}>📧 Recordatorio — Factura {c.numero_factura}</strong>
           <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
         </div>
 
-        <div style={{ padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
           <div>
-            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Para</label>
-            <input value={correo} readOnly />
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
+            <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
           </div>
 
           <div>
-            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Mensaje (editable)</label>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
             <textarea
               value={mensaje}
               onChange={(e) => onCambiarMensaje(e.target.value)}
-              rows={12}
-              style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5 }}
+              rows={13}
+              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6, display: 'block' }}
             />
           </div>
 
           <div>
-            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 6 }}>Documentos</label>
             {cargandoDocs ? (
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 0' }}>⏳ Buscando factura y OC/proforma de esta OT...</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando factura y OC/proforma de esta OT...</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {documentos?.factura ? (
-                  <a href={documentos.factura.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none' }}>
+                  <a href={documentos.factura.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block', width: '100%', boxSizing: 'border-box' }}>
                     👁 Ver factura — {documentos.factura.nombre}
                   </a>
                 ) : (
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin factura subida en Documentos para esta OT.</span>
                 )}
                 {documentos?.ordenCompra ? (
-                  <a href={documentos.ordenCompra.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none' }}>
+                  <a href={documentos.ordenCompra.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block', width: '100%', boxSizing: 'border-box' }}>
                     👁 Ver {documentos.ordenCompra.tipo} — {documentos.ordenCompra.nombre}
                   </a>
                 ) : (
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin Orden de Compra/Cotización subida en Documentos para esta OT.</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin Orden de Compra/Proforma/Cotización subida en Documentos para esta OT.</span>
                 )}
               </div>
             )}
           </div>
         </div>
 
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-          <button className="btn" onClick={abrirGmail}>📧 Abrir en Gmail para enviar</button>
+          <a
+            className="btn"
+            href={linkGmail}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+          >
+            📧 Abrir en Gmail para enviar
+          </a>
         </div>
       </div>
     </div>
