@@ -133,14 +133,14 @@ function calcularResumenAnual(cobranzas) {
     })
 }
 
-function KpiCard({ label, value, sub, color }) {
+function KpiCard({ label, value, sub, color, compacta }) {
   return (
-    <div className="card" style={{ flex: 1, minWidth: 150 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 6 }}>
+    <div className="card" style={{ flex: 1, minWidth: compacta ? 130 : 150, padding: compacta ? '10px 14px' : undefined }}>
+      <div style={{ fontSize: compacta ? 9 : 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: compacta ? 3 : 6 }}>
         {label}
       </div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: color || 'var(--ocean-accent)', lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{sub}</div>}
+      <div style={{ fontSize: compacta ? 18 : 24, fontWeight: 800, color: color || 'var(--ocean-accent)', lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: compacta ? 10 : 11, color: 'var(--text-muted)', marginTop: compacta ? 2 : 4 }}>{sub}</div>}
     </div>
   )
 }
@@ -203,16 +203,23 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
   const linkCorreo = correo
     ? `mailto:${correo}?subject=${encodeURIComponent(`Recordatorio de pago — Factura ${c.numero_factura}`)}&body=${encodeURIComponent(mensaje)}`
     : null
+  const estiloIcono = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 38, height: 38, borderRadius: '50%', fontSize: 20,
+    textDecoration: 'none', color: '#fff', flexShrink: 0,
+    boxShadow: '0 2px 6px rgba(0,0,0,0.15)', transition: 'transform 0.15s ease',
+  }
   return (
-    <div style={{ display: 'flex', gap: 6 }}>
+    <div style={{ display: 'flex', gap: 8 }}>
       {linkWhatsApp && (
         <a
           href={linkWhatsApp}
           target="_blank"
           rel="noreferrer"
-          title={`Enviar recordatorio por WhatsApp a ${c.cliente_telefono}`}
-          className="btn btn-secondary"
-          style={{ fontSize: 11, padding: '4px 8px', textDecoration: 'none' }}
+          title={`Enviar recordatorio por WhatsApp a ${contacto.telefono}`}
+          style={{ ...estiloIcono, background: '#25D366' }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
         >
           💬
         </a>
@@ -221,8 +228,9 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
         <a
           href={linkCorreo}
           title={`Enviar recordatorio por correo a ${correo}`}
-          className="btn btn-secondary"
-          style={{ fontSize: 11, padding: '4px 8px', textDecoration: 'none' }}
+          style={{ ...estiloIcono, background: '#3f6ea6' }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
         >
           📧
         </a>
@@ -553,7 +561,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   }
 
   return (
-    <div className="container container-ancho seguimiento-tema-calido" style={{ maxWidth: 1300, margin: '0 auto', position: 'relative', minHeight: '100vh' }}>
+    <div className="container container-ancho seguimiento-tema-calido" style={{ maxWidth: 1680, margin: '0 auto', position: 'relative', minHeight: '100vh' }}>
       <style>{`
         /* ── Acento cálido solo para esta pantalla ──────────────────────
            No se toca el fondo oscuro base ni ninguna otra página: estos
@@ -710,17 +718,17 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           </div>
 
           {/* ── KPIs del mes seleccionado ── */}
-          <div className="card" style={{ marginBottom: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+          <div className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
               <div className="otdetail-section-label" style={{ margin: 0 }}>Resumen del mes</div>
-              <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 160 }} />
+              <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 150 }} />
             </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <KpiCard label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
-              <KpiCard label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
-              <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#8a5b72" />
-              <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#a35f27" />
-              <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#4c8a63" />
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <KpiCard compacta label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
+              <KpiCard compacta label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
+              <KpiCard compacta label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#8a5b72" />
+              <KpiCard compacta label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#a35f27" />
+              <KpiCard compacta label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#4c8a63" />
             </div>
           </div>
 
@@ -760,7 +768,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
             ) : filasFiltradas.length === 0 ? (
               <p style={{ padding: 16, color: 'var(--text-muted)' }}>No hay facturas que coincidan con el filtro.</p>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '65vh' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr>
@@ -768,9 +776,10 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                         <th
                           key={h}
                           style={{
-                            padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
-                            letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)',
-                            whiteSpace: 'nowrap',
+                            padding: '10px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
+                            letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '2px solid var(--border)',
+                            whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2,
+                            background: 'rgba(255, 250, 240, 0.98)',
                           }}
                         >
                           {h}
