@@ -216,29 +216,31 @@ function armarMensajeRecordatorio(c, cliente, semaforo) {
   ].filter((l) => l !== null).join('\n')
 }
 
-// ── Busca en `documentos` la factura y la OC/proforma de esta OT ─────────
-// Devuelve enlaces temporales de visualización (no adjuntos: ningún
-// proveedor de correo permite adjuntar un archivo automáticamente desde un
-// enlace — es una restricción de seguridad del navegador). El destinatario
-// hace clic y ve/descarga el archivo directamente.
+// ── Busca en `documentos` TODO lo relevante de esta OT (factura, XML,
+// OC/proforma/cotización) — no solo el primero de cada tipo, todos los que
+// haya. Devuelve un array donde cada documento queda marcado como:
+//   - url: enlace listo para ver/descargar
+//   - error: true si el documento existe pero el webhook no pudo generar
+//     el enlace (falla real del servicio, no "no hay documento" — se
+//     distingue explícitamente para no dar información falsa)
+// No se pueden adjuntar archivos automáticamente a un correo desde un
+// enlace en ningún proveedor (restricción de seguridad del navegador);
+// por eso siempre se resuelve como enlace de visualización, nunca adjunto.
+const TIPOS_DOC_RECORDATORIO = ['Factura', 'Factura XML', 'Orden de Compra', 'Cotización', 'Proforma']
+
 async function buscarEnlacesDocumentos(otNumber) {
-  const enlaces = { factura: null, ordenCompra: null }
   try {
     const { data: docs, error } = await supabase
       .from('documentos')
-      .select('ruta_minio, tipo_documento, nombre_archivo, created_at')
+      .select('id, ruta_minio, tipo_documento, nombre_archivo, created_at')
       .eq('ot_number', otNumber)
-      .in('tipo_documento', ['Factura', 'Orden de Compra', 'Cotización', 'Proforma'])
+      .in('tipo_documento', TIPOS_DOC_RECORDATORIO)
       .order('created_at', { ascending: false })
-    if (error || !docs) return enlaces
+    if (error || !docs) return []
 
-    const docFactura = docs.find((d) => d.tipo_documento === 'Factura')
-    const docOC = docs.find((d) => d.tipo_documento === 'Orden de Compra')
-      || docs.find((d) => d.tipo_documento === 'Proforma')
-      || docs.find((d) => d.tipo_documento === 'Cotización')
-
-    async function urlDe(doc) {
-      if (!doc?.ruta_minio) return null
+    return await Promise.all(docs.map(async (doc) => {
+      const item = { id: doc.id, tipo: doc.tipo_documento, nombre: doc.nombre_archivo, url: null, error: false }
+      if (!doc.ruta_minio) { item.error = true; return item }
       try {
         const resp = await fetch(WEBHOOK_URL_DOCUMENTO, {
           method: 'POST',
@@ -246,19 +248,17 @@ async function buscarEnlacesDocumentos(otNumber) {
           body: JSON.stringify({ ruta_minio: doc.ruta_minio }),
         })
         const data = await resp.json()
-        return data?.url ? { url: data.url, nombre: doc.nombre_archivo, tipo: doc.tipo_documento } : null
+        if (data?.url) item.url = data.url
+        else item.error = true
       } catch {
-        return null
+        item.error = true
       }
-    }
-
-    const [factura, ordenCompra] = await Promise.all([urlDe(docFactura), urlDe(docOC)])
-    enlaces.factura = factura
-    enlaces.ordenCompra = ordenCompra
+      return item
+    }))
   } catch (e) {
     console.error('No se pudieron buscar los documentos para el recordatorio:', e)
+    return []
   }
-  return enlaces
 }
 
 
@@ -334,13 +334,15 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto, onAbrirCorreo }) 
 // editable) y los documentos encontrados, para revisar antes de enviar.
 // "Abrir en Gmail" es un <a> real (no window.open): así el navegador nunca
 // lo trata como pop-up y siempre navega, sin importar el navegador.
-function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje }) {
+function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje, onReintentarDocs }) {
   const { c, correo, mensaje, cargandoDocs, documentos } = datos
   const linkGmail = construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensaje)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
   }
+
+  const hayFallidos = documentos?.some((d) => d.error)
 
   return (
     <div
@@ -374,25 +376,44 @@ function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje }) {
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 6 }}>Documentos</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)' }}>Documentos</label>
+              {hayFallidos && !cargandoDocs && (
+                <button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 9px' }} onClick={onReintentarDocs}>🔄 Reintentar enlaces</button>
+              )}
+            </div>
             {cargandoDocs ? (
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando factura y OC/proforma de esta OT...</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando factura, proforma y orden de compra de esta OT...</p>
+            ) : !documentos || documentos.length === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                No se encontró ninguna factura, proforma u orden de compra subida en Documentos para esta OT.
+              </span>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {documentos?.factura ? (
-                  <a href={documentos.factura.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block', width: '100%', boxSizing: 'border-box' }}>
-                    👁 Ver factura — {documentos.factura.nombre}
-                  </a>
-                ) : (
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin factura subida en Documentos para esta OT.</span>
-                )}
-                {documentos?.ordenCompra ? (
-                  <a href={documentos.ordenCompra.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block', width: '100%', boxSizing: 'border-box' }}>
-                    👁 Ver {documentos.ordenCompra.tipo} — {documentos.ordenCompra.nombre}
-                  </a>
-                ) : (
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin Orden de Compra/Proforma/Cotización subida en Documentos para esta OT.</span>
-                )}
+                {documentos.map((doc) => (
+                  doc.url ? (
+                    <a
+                      key={doc.id}
+                      href={doc.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary"
+                      style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block', width: '100%', boxSizing: 'border-box' }}
+                    >
+                      👁 Ver {doc.tipo} — {doc.nombre}
+                    </a>
+                  ) : (
+                    <div
+                      key={doc.id}
+                      style={{
+                        fontSize: 12, padding: '8px 12px', borderRadius: 8,
+                        background: 'rgba(198,91,58,0.12)', border: '1px solid rgba(198,91,58,0.3)', color: '#c65b3a',
+                      }}
+                    >
+                      ⚠ {doc.tipo} "{doc.nombre}" existe, pero no se pudo generar el enlace (falla del servicio de documentos, no del recordatorio). Ábrelo desde "Documentos subidos" en la OT o vuelve a intentarlo ahí.
+                    </div>
+                  )
+                ))}
               </div>
             )}
           </div>
@@ -503,12 +524,23 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   const [modalCorreo, setModalCorreo] = useState(null)
 
   // Abre el modal de inmediato con el mensaje ya armado, y busca los
-  // documentos (factura / OC-proforma) en paralelo — no bloquea la
+  // documentos (factura / OC / proforma) en paralelo — no bloquea la
   // apertura del modal esperando la búsqueda.
   function abrirModalCorreo(c, cliente, correo, mensaje) {
     setModalCorreo({ c, correo, mensaje, cargandoDocs: true, documentos: null })
     buscarEnlacesDocumentos(c.ot_number).then((docs) => {
       setModalCorreo((prev) => (prev && prev.c.id === c.id ? { ...prev, cargandoDocs: false, documentos: docs } : prev))
+    })
+  }
+
+  // Reintenta solo la parte de documentos (sin tocar el mensaje ya editado).
+  function reintentarDocsModal() {
+    setModalCorreo((prev) => {
+      if (!prev) return prev
+      buscarEnlacesDocumentos(prev.c.ot_number).then((docs) => {
+        setModalCorreo((actual) => (actual && actual.c.id === prev.c.id ? { ...actual, cargandoDocs: false, documentos: docs } : actual))
+      })
+      return { ...prev, cargandoDocs: true }
     })
   }
 
@@ -1228,6 +1260,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           datos={modalCorreo}
           onClose={() => setModalCorreo(null)}
           onCambiarMensaje={(nuevoMensaje) => setModalCorreo((prev) => ({ ...prev, mensaje: nuevoMensaje }))}
+          onReintentarDocs={reintentarDocsModal}
         />
       )}
     </div>
