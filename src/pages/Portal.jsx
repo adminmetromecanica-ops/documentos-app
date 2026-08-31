@@ -355,6 +355,10 @@ export default function Portal({ profile, onLogout }) {
   const navigate = useNavigate()
   const esGerencia = profile?.area === 'gerencia'
   const veFacturas = AREAS_VEN_FACTURAS.includes(profile?.area)
+  const esContabilidad = profile?.area === 'contabilidad'
+
+  const [avisoFacturas, setAvisoFacturas] = useState(null)
+  const [avisoDescartado, setAvisoDescartado] = useState(false)
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -397,6 +401,36 @@ export default function Portal({ profile, onLogout }) {
     return () => clearInterval(t)
   }, [])
 
+  // ── Aviso de facturas vencidas/por vencer — solo para Contabilidad ──────
+  // Se calcula ni bien entra al Portal, sin depender de que abra Seguimiento
+  // de Facturas. Umbral de "por vencer" alineado con el de esa herramienta
+  // (7 días).
+  useEffect(() => {
+    if (!esContabilidad) return
+    async function cargarAvisoFacturas() {
+      const { data, error } = await supabase
+        .from('cobranza')
+        .select('fecha_vencimiento, monto, monto_detraccion, estado')
+        .neq('estado', 'cobrado')
+      if (error) {
+        console.error('No se pudo cargar aviso de facturas:', error)
+        return
+      }
+      const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+      let vencidas = 0, porVencer = 0, montoVencido = 0
+      for (const c of data || []) {
+        if (!c.fecha_vencimiento) continue
+        const f = new Date(c.fecha_vencimiento + 'T00:00:00')
+        const dias = Math.round((f - hoy) / 86400000)
+        const monto = Number(c.monto || 0) - Number(c.monto_detraccion || 0)
+        if (dias < 0) { vencidas++; montoVencido += monto }
+        else if (dias <= 7) { porVencer++ }
+      }
+      setAvisoFacturas({ vencidas, porVencer, montoVencido })
+    }
+    cargarAvisoFacturas()
+  }, [esContabilidad])
+
   // Abre la herramienta como ventana tipo "app" (sin barra de pestañas/direcciones,
   // en la medida que el navegador lo permite vía window.open). Las rutas internas
   // (que empiezan con "/") siguen navegando dentro de la misma app con React Router.
@@ -433,6 +467,47 @@ export default function Portal({ profile, onLogout }) {
       <div className="portal-grid-bg" />
       <div className="portal-glow" />
       <div className="portal-inner">
+
+        {esContabilidad && avisoFacturas && !avisoDescartado && (avisoFacturas.vencidas > 0 || avisoFacturas.porVencer > 0) && (
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+              background: avisoFacturas.vencidas > 0 ? 'rgba(255,59,78,0.1)' : 'rgba(240,165,0,0.1)',
+              border: `1px solid ${avisoFacturas.vencidas > 0 ? 'rgba(255,59,78,0.35)' : 'rgba(240,165,0,0.35)'}`,
+              borderRadius: 12, padding: '14px 18px', marginBottom: 20,
+            }}
+          >
+            <span style={{ fontSize: 22, flexShrink: 0 }}>{avisoFacturas.vencidas > 0 ? '🔴' : '🟡'}</span>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                {avisoFacturas.vencidas > 0
+                  ? `Tienes ${avisoFacturas.vencidas} factura${avisoFacturas.vencidas !== 1 ? 's' : ''} vencida${avisoFacturas.vencidas !== 1 ? 's' : ''}`
+                  : `${avisoFacturas.porVencer} factura${avisoFacturas.porVencer !== 1 ? 's' : ''} por vencer esta semana`}
+                {avisoFacturas.vencidas > 0 && avisoFacturas.porVencer > 0 && ` · ${avisoFacturas.porVencer} por vencer esta semana`}
+              </div>
+              {avisoFacturas.vencidas > 0 && (
+                <div style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
+                  Monto vencido pendiente: S/ {avisoFacturas.montoVencido.toFixed(2)}
+                </div>
+              )}
+            </div>
+            <button
+              className="portal-btn"
+              style={{ borderColor: avisoFacturas.vencidas > 0 ? 'rgba(255,59,78,0.4)' : 'rgba(240,165,0,0.4)' }}
+              onClick={() => { playSelectSound(); navigate('/facturas') }}
+            >
+              Ver ahora →
+            </button>
+            <button
+              className="theme-toggle"
+              style={{ width: 28, height: 28, fontSize: 13 }}
+              title="Descartar por esta vez"
+              onClick={() => setAvisoDescartado(true)}
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         <div className="portal-header">
           <div className="portal-brand">

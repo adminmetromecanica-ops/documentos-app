@@ -160,6 +160,29 @@ function normalizarTelefonoWhatsApp(telefono) {
   return soloDigitos
 }
 
+// ── Extrae un teléfono del campo libre "Contacto" de la OT ────────────────
+// Misma lógica que en OTDetail.jsx (CobranzaCard) — se duplica aquí porque
+// son páginas independientes, sin utilidades compartidas entre ellas.
+function extraerTelefonoDeContacto(contactoTexto) {
+  if (!contactoTexto) return ''
+  const match = contactoTexto.match(/(\+?\d[\d\s-]{7,}\d)/)
+  if (!match) return ''
+  return match[1].replace(/[\s-]/g, '')
+}
+
+// ── Contacto efectivo de una factura ───────────────────────────────────
+// Si la factura ya tiene su propio correo/teléfono guardado, se usa ese.
+// Si no, se completa al vuelo con el de la OT (Ventas) — sin depender de
+// que alguien haya entrado a esa OT y guardado el formulario primero. Así
+// "Sin contacto" solo aparece cuando de verdad no hay ningún dato en
+// ningún lado.
+function obtenerContactoEfectivo(c, servicio) {
+  return {
+    correo: c.cliente_correo || servicio?.correo || null,
+    telefono: c.cliente_telefono || extraerTelefonoDeContacto(servicio?.contacto) || null,
+  }
+}
+
 function armarMensajeRecordatorio(c, cliente, semaforo) {
   const monto = fmtMoneda(montoACobrar(c), c.moneda)
   const vencimiento = fmtFecha(c.fecha_vencimiento)
@@ -169,9 +192,9 @@ function armarMensajeRecordatorio(c, cliente, semaforo) {
   return `Hola${cliente ? ' ' + cliente : ''}, le recordamos de MetroMecánica que la factura ${c.numero_factura} por ${monto} vence el ${vencimiento}. Quedamos atentos. Gracias.`
 }
 
-function BotonesRecordatorio({ c, cliente, semaforo }) {
-  const telefono = normalizarTelefonoWhatsApp(c.cliente_telefono)
-  const correo = c.cliente_correo
+function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
+  const telefono = normalizarTelefonoWhatsApp(contacto.telefono)
+  const correo = contacto.correo
   if (!telefono && !correo) {
     return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Sin contacto</span>
   }
@@ -302,7 +325,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
 
     const [{ data: cobranzasData, error: errCobranzas }, { data: serviciosData, error: errServicios }] = await Promise.all([
       supabase.from('cobranza').select('*').order('fecha_vencimiento', { ascending: true }),
-      supabase.from('services').select('id, ot_number, client, ruc, status, due_date, created_at, updated_at'),
+      supabase.from('services').select('id, ot_number, client, ruc, status, due_date, created_at, updated_at, correo, contacto'),
     ])
 
     if (errCobranzas) console.error('Error cargando cobranzas:', errCobranzas)
@@ -399,7 +422,10 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     const pendientes = cobranzas.filter((c) => c.estado !== 'cobrado')
     const vencidas = pendientes.filter((c) => calcularSemaforo(c).key === 'vencido')
     const porVencer = pendientes.filter((c) => calcularSemaforo(c).key === 'por_vencer')
-    const sinContacto = pendientes.filter((c) => !c.cliente_correo && !c.cliente_telefono)
+    const sinContacto = pendientes.filter((c) => {
+      const efectivo = obtenerContactoEfectivo(c, clientesPorOT[c.ot_number])
+      return !efectivo.correo && !efectivo.telefono
+    })
     const montoPendienteTotal = pendientes.reduce((acc, c) => acc + montoACobrar(c), 0)
     const montoVencidoTotal = vencidas.reduce((acc, c) => acc + montoACobrar(c), 0)
     return {
@@ -410,7 +436,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
       montoPendienteTotal,
       montoVencidoTotal,
     }
-  }, [cobranzas])
+  }, [cobranzas, clientesPorOT])
 
   // ── Filtrado de la tabla de facturas ─────────────────────────────────
   const filasFiltradas = useMemo(() => {
@@ -755,7 +781,9 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                   <tbody>
                     {filasFiltradas.map((c) => {
                       const semaforo = calcularSemaforo(c)
-                      const cliente = clientesPorOT[c.ot_number]?.client || c.cliente_nombre || '—'
+                      const servicio = clientesPorOT[c.ot_number]
+                      const cliente = servicio?.client || c.cliente_nombre || '—'
+                      const contacto = obtenerContactoEfectivo(c, servicio)
                       return (
                         <tr key={c.id}>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
@@ -784,7 +812,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                             </span>
                           </td>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                            {c.estado !== 'cobrado' && <BotonesRecordatorio c={c} cliente={cliente} semaforo={semaforo} />}
+                            {c.estado !== 'cobrado' && <BotonesRecordatorio c={c} cliente={cliente} semaforo={semaforo} contacto={contacto} />}
                           </td>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                             {puedeEditar && c.estado !== 'cobrado' && (
