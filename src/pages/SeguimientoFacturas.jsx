@@ -3,14 +3,25 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
 // ── Roles con acceso a esta herramienta ────────────────────────────────────
-// 'contabilidad' puede editar (marcar cobrado, corregir datos desde aquí no
-// está incluido en esta versión — la edición fina de una factura sigue
-// haciéndose en la OT). 'gerencia' (que también es el área de la cuenta
-// admin@) accede en modo solo lectura.
+// 'contabilidad' puede editar (marcar cobrado). 'gerencia' (que también es el
+// área de la cuenta admin@) accede en modo solo lectura.
 const AREA_EDITA = 'contabilidad'
 const AREAS_PERMITIDAS = ['contabilidad', 'gerencia']
 
 const DIAS_UMBRAL_POR_VENCER = 7
+
+// Estados de OT en los que ya debería existir una factura (o estar por
+// generarse pronto). Antes de "pendiente-fact" el servicio normalmente aún
+// está en laboratorio y no corresponde facturar todavía.
+const ESTADOS_DEBERIA_FACTURAR = ['pendiente-fact', 'concluido']
+
+const STATUS_LABEL = {
+  programado: 'Programado',
+  'en-proceso': 'En Proceso',
+  'pendiente-cert': 'Pend. Certificado',
+  'pendiente-fact': 'Pend. Facturación',
+  concluido: 'Concluido',
+}
 
 function hoyISO() {
   return new Date().toISOString().split('T')[0]
@@ -72,7 +83,9 @@ function KpiCard({ label, value, sub, color }) {
 
 export default function SeguimientoFacturas({ profile, onLogout }) {
   const navigate = useNavigate()
+  const [tab, setTab] = useState('facturas') // 'facturas' | 'sin_factura'
   const [cobranzas, setCobranzas] = useState([])
+  const [servicios, setServicios] = useState([])
   const [clientesPorOT, setClientesPorOT] = useState({})
   const [loading, setLoading] = useState(true)
   const [mes, setMes] = useState(mesActualValue())
@@ -85,30 +98,23 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
 
   async function cargarDatos() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('cobranza')
-      .select('*')
-      .order('fecha_vencimiento', { ascending: true })
 
-    if (error) {
-      console.error('Error cargando cobranzas:', error)
-      setLoading(false)
-      return
-    }
+    const [{ data: cobranzasData, error: errCobranzas }, { data: serviciosData, error: errServicios }] = await Promise.all([
+      supabase.from('cobranza').select('*').order('fecha_vencimiento', { ascending: true }),
+      supabase.from('services').select('id, ot_number, client, ruc, status, due_date, created_at, updated_at'),
+    ])
 
-    const filas = data || []
+    if (errCobranzas) console.error('Error cargando cobranzas:', errCobranzas)
+    if (errServicios) console.error('Error cargando servicios:', errServicios)
+
+    const filas = cobranzasData || []
+    const svcs = serviciosData || []
     setCobranzas(filas)
+    setServicios(svcs)
 
-    const otNumbers = [...new Set(filas.map((c) => c.ot_number).filter(Boolean))]
-    if (otNumbers.length > 0) {
-      const { data: servicios } = await supabase
-        .from('services')
-        .select('ot_number, client, ruc')
-        .in('ot_number', otNumbers)
-      const mapa = {}
-      for (const s of servicios || []) mapa[s.ot_number] = s
-      setClientesPorOT(mapa)
-    }
+    const mapa = {}
+    for (const s of svcs) mapa[s.ot_number] = s
+    setClientesPorOT(mapa)
 
     setLoading(false)
   }
@@ -133,6 +139,32 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     }
     setGuardandoId(null)
   }
+
+  // ── OTs que aún no tienen ninguna factura registrada en `cobranza` ──────
+  // Cruce por ot_number: cualquier OT en `services` sin fila correspondiente
+  // en `cobranza` se considera "sin factura", sin depender de que alguien
+  // haya actualizado manualmente el estado a tiempo.
+  const otsSinFactura = useMemo(() => {
+    const otsConFactura = new Set(cobranzas.map((c) => c.ot_number))
+    return servicios.filter((s) => s.ot_number && !otsConFactura.has(s.ot_number))
+  }, [cobranzas, servicios])
+
+  const otsSinFacturaUrgentes = useMemo(
+    () => otsSinFactura.filter((s) => ESTADOS_DEBERIA_FACTURAR.includes(s.status)),
+    [otsSinFactura]
+  )
+
+  const otsSinFacturaFiltradas = useMemo(() => {
+    return otsSinFactura.filter((s) => {
+      if (busqueda.trim()) {
+        const q = busqueda.trim().toLowerCase()
+        const enOT = (s.ot_number || '').toLowerCase().includes(q)
+        const enCliente = (s.client || '').toLowerCase().includes(q)
+        if (!enOT && !enCliente) return false
+      }
+      return true
+    })
+  }, [otsSinFactura, busqueda])
 
   // ── KPIs del mes seleccionado ──────────────────────────────────────────
   const kpisMes = useMemo(() => {
@@ -177,7 +209,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     }
   }, [cobranzas])
 
-  // ── Filtrado de la tabla ─────────────────────────────────────────────
+  // ── Filtrado de la tabla de facturas ─────────────────────────────────
   const filasFiltradas = useMemo(() => {
     return cobranzas.filter((c) => {
       const semaforo = calcularSemaforo(c)
@@ -225,6 +257,26 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     URL.revokeObjectURL(url)
   }
 
+  function exportarSinFacturaCSV() {
+    const cols = ['OT', 'Cliente', 'RUC', 'Estado', 'Fecha Entrega', 'Creado']
+    const filas = otsSinFacturaFiltradas.map((s) => [
+      s.ot_number || '',
+      s.client || '',
+      s.ruc || '',
+      STATUS_LABEL[s.status] || s.status || '',
+      s.due_date || '',
+      s.created_at ? s.created_at.split('T')[0] : '',
+    ])
+    const csv = [cols, ...filas].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `OTs_sin_factura_${hoyISO()}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (!acceso) {
     return (
       <div className="container" style={{ maxWidth: 600, margin: '80px auto', textAlign: 'center' }}>
@@ -248,137 +300,266 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn btn-secondary" onClick={exportarCSV}>⬇ Exportar CSV</button>
           {onLogout && <button className="btn btn-secondary" onClick={onLogout}>Salir</button>}
         </div>
       </div>
 
-      {/* ── KPIs globales ── */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', margin: '20px 0' }}>
-        <KpiCard label="Facturas pendientes" value={kpisGlobales.totalPendientes} sub={fmtMoneda(kpisGlobales.montoPendienteTotal, 'PEN')} />
-        <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#f87171" />
-        <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#facc15" />
+      {/* ── Tabs ── */}
+      <div style={{ display: 'flex', gap: 8, margin: '20px 0 16px', borderBottom: '1px solid var(--border)' }}>
+        <button
+          onClick={() => setTab('facturas')}
+          style={{
+            padding: '10px 18px', border: 'none', background: 'transparent', cursor: 'pointer',
+            fontWeight: 700, fontSize: 13,
+            color: tab === 'facturas' ? 'var(--ocean-accent)' : 'var(--text-muted)',
+            borderBottom: `2px solid ${tab === 'facturas' ? 'var(--ocean-accent)' : 'transparent'}`,
+          }}
+        >
+          🧾 Facturas registradas
+        </button>
+        <button
+          onClick={() => setTab('sin_factura')}
+          style={{
+            padding: '10px 18px', border: 'none', background: 'transparent', cursor: 'pointer',
+            fontWeight: 700, fontSize: 13,
+            color: tab === 'sin_factura' ? 'var(--ocean-accent)' : 'var(--text-muted)',
+            borderBottom: `2px solid ${tab === 'sin_factura' ? 'var(--ocean-accent)' : 'transparent'}`,
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          🚫 OTs sin factura
+          {otsSinFacturaUrgentes.length > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, background: '#f87171', color: '#1a0505',
+              borderRadius: 999, padding: '1px 7px', minWidth: 18, textAlign: 'center',
+            }}>
+              {otsSinFacturaUrgentes.length}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* ── KPIs del mes seleccionado ── */}
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
-          <div className="otdetail-section-label" style={{ margin: 0 }}>Resumen del mes</div>
-          <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 160 }} />
-        </div>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <KpiCard label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
-          <KpiCard label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
-          <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#a78bfa" />
-          <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#f97316" />
-          <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#4ade80" />
-        </div>
-      </div>
-
-      {/* ── Filtros ── */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {[
-            ['todas', 'Todas'],
-            ['vencido', '⚠ Vencidas'],
-            ['por_vencer', '⏰ Por vencer'],
-            ['pendiente', 'Pendientes'],
-            ['cobrado', '✅ Cobradas'],
-          ].map(([k, l]) => (
-            <button
-              key={k}
-              className={filtroEstado === k ? 'btn' : 'btn btn-secondary'}
-              style={{ fontSize: 12, padding: '6px 12px' }}
-              onClick={() => setFiltroEstado(k)}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
-        <input
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar por OT, cliente o N° factura..."
-          style={{ maxWidth: 280, marginLeft: 'auto' }}
-        />
-      </div>
-
-      {/* ── Tabla ── */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {loading ? (
-          <p style={{ padding: 16, color: 'var(--text-muted)' }}>Cargando...</p>
-        ) : filasFiltradas.length === 0 ? (
-          <p style={{ padding: 16, color: 'var(--text-muted)' }}>No hay facturas que coincidan con el filtro.</p>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <thead>
-                <tr>
-                  {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', ''].map((h) => (
-                    <th
-                      key={h}
-                      style={{
-                        padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
-                        letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filasFiltradas.map((c) => {
-                  const semaforo = calcularSemaforo(c)
-                  const cliente = clientesPorOT[c.ot_number]?.client || c.cliente_nombre || '—'
-                  return (
-                    <tr key={c.id}>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                        <a onClick={() => navigate(`/ot/${c.ot_number}`)} style={{ cursor: 'pointer', color: 'var(--ocean-accent)' }}>
-                          {c.ot_number}
-                        </a>
-                      </td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {cliente}
-                      </td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontFamily: 'monospace' }}>{c.numero_factura}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(c.fecha_emision)}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(c.fecha_vencimiento)}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{c.condicion_pago}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(c.monto, c.moneda)}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{c.igv != null ? fmtMoneda(c.igv, c.moneda) : '—'}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                        {c.monto_detraccion != null ? fmtMoneda(c.monto_detraccion, c.moneda) : '—'}
-                      </td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: 'var(--ocean-accent)' }}>
-                        {fmtMoneda(montoACobrar(c), c.moneda)}
-                      </td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: semaforo.color, background: `${semaforo.color}22`, borderRadius: 20, padding: '3px 10px' }}>
-                          {semaforo.label}
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                        {puedeEditar && c.estado !== 'cobrado' && (
-                          <button
-                            className="btn btn-secondary"
-                            style={{ fontSize: 11, padding: '4px 10px' }}
-                            disabled={guardandoId === c.id}
-                            onClick={() => marcarCobrado(c)}
-                          >
-                            {guardandoId === c.id ? '...' : '✓ Cobrado'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+      {tab === 'facturas' && (
+        <>
+          {/* ── KPIs globales ── */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+            <KpiCard label="Facturas pendientes" value={kpisGlobales.totalPendientes} sub={fmtMoneda(kpisGlobales.montoPendienteTotal, 'PEN')} />
+            <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#f87171" />
+            <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#facc15" />
+            <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#f97316" />
           </div>
-        )}
-      </div>
+
+          {/* ── KPIs del mes seleccionado ── */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+              <div className="otdetail-section-label" style={{ margin: 0 }}>Resumen del mes</div>
+              <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 160 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <KpiCard label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
+              <KpiCard label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
+              <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#a78bfa" />
+              <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#f97316" />
+              <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#4ade80" />
+            </div>
+          </div>
+
+          {/* ── Filtros ── */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[
+                ['todas', 'Todas'],
+                ['vencido', '⚠ Vencidas'],
+                ['por_vencer', '⏰ Por vencer'],
+                ['pendiente', 'Pendientes'],
+                ['cobrado', '✅ Cobradas'],
+              ].map(([k, l]) => (
+                <button
+                  key={k}
+                  className={filtroEstado === k ? 'btn' : 'btn btn-secondary'}
+                  style={{ fontSize: 12, padding: '6px 12px' }}
+                  onClick={() => setFiltroEstado(k)}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por OT, cliente o N° factura..."
+              style={{ maxWidth: 280, marginLeft: 'auto' }}
+            />
+            <button className="btn btn-secondary" onClick={exportarCSV}>⬇ Exportar CSV</button>
+          </div>
+
+          {/* ── Tabla ── */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {loading ? (
+              <p style={{ padding: 16, color: 'var(--text-muted)' }}>Cargando...</p>
+            ) : filasFiltradas.length === 0 ? (
+              <p style={{ padding: 16, color: 'var(--text-muted)' }}>No hay facturas que coincidan con el filtro.</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', ''].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
+                            letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filasFiltradas.map((c) => {
+                      const semaforo = calcularSemaforo(c)
+                      const cliente = clientesPorOT[c.ot_number]?.client || c.cliente_nombre || '—'
+                      return (
+                        <tr key={c.id}>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                            <a onClick={() => navigate(`/ot/${c.ot_number}`)} style={{ cursor: 'pointer', color: 'var(--ocean-accent)' }}>
+                              {c.ot_number}
+                            </a>
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {cliente}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontFamily: 'monospace' }}>{c.numero_factura}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(c.fecha_emision)}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(c.fecha_vencimiento)}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{c.condicion_pago}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(c.monto, c.moneda)}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{c.igv != null ? fmtMoneda(c.igv, c.moneda) : '—'}</td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                            {c.monto_detraccion != null ? fmtMoneda(c.monto_detraccion, c.moneda) : '—'}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: 'var(--ocean-accent)' }}>
+                            {fmtMoneda(montoACobrar(c), c.moneda)}
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: semaforo.color, background: `${semaforo.color}22`, borderRadius: 20, padding: '3px 10px' }}>
+                              {semaforo.label}
+                            </span>
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                            {puedeEditar && c.estado !== 'cobrado' && (
+                              <button
+                                className="btn btn-secondary"
+                                style={{ fontSize: 11, padding: '4px 10px' }}
+                                disabled={guardandoId === c.id}
+                                onClick={() => marcarCobrado(c)}
+                              >
+                                {guardandoId === c.id ? '...' : '✓ Cobrado'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {tab === 'sin_factura' && (
+        <>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+            <KpiCard label="Total OTs sin factura" value={otsSinFactura.length} />
+            <KpiCard
+              label="Deberían tener factura ya"
+              value={otsSinFacturaUrgentes.length}
+              sub="Estado: Pend. Facturación o Concluido"
+              color="#f87171"
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por OT o cliente..."
+              style={{ maxWidth: 280 }}
+            />
+            <button className="btn btn-secondary" style={{ marginLeft: 'auto' }} onClick={exportarSinFacturaCSV}>⬇ Exportar CSV</button>
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {loading ? (
+              <p style={{ padding: 16, color: 'var(--text-muted)' }}>Cargando...</p>
+            ) : otsSinFacturaFiltradas.length === 0 ? (
+              <p style={{ padding: 16, color: 'var(--text-muted)' }}>Todas las OTs tienen factura registrada. 🎉</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {['OT', 'Cliente', 'RUC', 'Estado', 'Fecha Entrega', ''].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
+                            letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {otsSinFacturaFiltradas
+                      .slice()
+                      .sort((a, b) => {
+                        const aUrge = ESTADOS_DEBERIA_FACTURAR.includes(a.status) ? 0 : 1
+                        const bUrge = ESTADOS_DEBERIA_FACTURAR.includes(b.status) ? 0 : 1
+                        return aUrge - bUrge
+                      })
+                      .map((s) => {
+                        const urge = ESTADOS_DEBERIA_FACTURAR.includes(s.status)
+                        return (
+                          <tr key={s.id}>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                              <a onClick={() => navigate(`/ot/${s.ot_number}`)} style={{ cursor: 'pointer', color: 'var(--ocean-accent)' }}>
+                                {s.ot_number}
+                              </a>
+                            </td>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.client || '—'}
+                            </td>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontFamily: 'monospace' }}>{s.ruc || '—'}</td>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                              {STATUS_LABEL[s.status] || s.status || '—'}
+                            </td>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(s.due_date)}</td>
+                            <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                              {urge && (
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#f87171', background: '#f8717122', borderRadius: 20, padding: '3px 10px' }}>
+                                  🚫 Falta subir
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
