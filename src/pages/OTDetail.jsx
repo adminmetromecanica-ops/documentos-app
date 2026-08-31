@@ -660,7 +660,7 @@ function formatFechaObs(fechaIso) {
 }
 
 // Lista de documentos agrupada por tipo, con contador y colapso/expansión
-function DocumentosPorTipo({ documentos, abriendoId, onVer }) {
+function DocumentosPorTipo({ documentos, abriendoId, onVer, puedeEliminar, onEliminar, eliminandoId }) {
   const grupos = agruparDocumentosPorTipo(documentos)
   const [expandido, setExpandido] = useState(() => {
     const inicial = {}
@@ -720,14 +720,27 @@ function DocumentosPorTipo({ documentos, abriendoId, onVer }) {
                       {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
-                    disabled={abriendoId === d.id}
-                    onClick={() => onVer(d)}
-                  >
-                    {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ padding: '4px 12px', fontSize: 12 }}
+                      disabled={abriendoId === d.id}
+                      onClick={() => onVer(d)}
+                    >
+                      {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
+                    </button>
+                    {puedeEliminar && (
+                      <button
+                        className="btn btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: 12, color: 'var(--danger, #f87171)' }}
+                        disabled={eliminandoId === d.id}
+                        title="Eliminar este documento"
+                        onClick={() => onEliminar(d)}
+                      >
+                        {eliminandoId === d.id ? '⏳' : '🗑'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1559,6 +1572,7 @@ export default function OTDetail({ profile }) {
   const [documentos, setDocumentos] = useState([])
   const [activeArea, setActiveArea] = useState(profile.area === 'gerencia' ? 'laboratorio' : profile.area)
   const [abriendoId, setAbriendoId] = useState(null)
+  const [eliminandoId, setEliminandoId] = useState(null)
   const [visor, setVisor] = useState(null)
   const [noLeidosPorArea, setNoLeidosPorArea] = useState({})
 
@@ -1739,6 +1753,25 @@ export default function OTDetail({ profile }) {
     loadDocumentos()
   }
 
+  // ── Eliminar un documento subido por error ─────────────────────────────
+  // Borra el registro en Supabase (deja de aparecer en la lista y en
+  // cualquier búsqueda de la app, incluida Seguimiento de Facturas). El
+  // archivo físico en MinIO no se borra automáticamente — no hay un
+  // webhook de borrado configurado; si hace falta liberar espacio, se
+  // limpia manualmente desde la consola de MinIO.
+  async function eliminarDocumento(doc) {
+    if (!confirm(`¿Eliminar "${doc.nombre_archivo}"?\n\nEsta acción no se puede deshacer.`)) return
+    setEliminandoId(doc.id)
+    const { error } = await supabase.from('documentos').delete().eq('id', doc.id)
+    if (error) {
+      alert('No se pudo eliminar el documento: ' + error.message)
+    } else {
+      registrarAuditoria(profile.id, 'eliminar_documento', otNumber, `${activeArea}: ${doc.nombre_archivo}`)
+      loadDocumentos()
+    }
+    setEliminandoId(null)
+  }
+
   async function verDocumento(doc) {
     if (!doc.ruta_minio) {
       alert('Este documento no tiene una ruta válida en MinIO.')
@@ -1856,7 +1889,14 @@ export default function OTDetail({ profile }) {
 
           <div className="card">
             <div className="otdetail-section-label">Documentos subidos</div>
-            <DocumentosPorTipo documentos={documentos} abriendoId={abriendoId} onVer={verDocumento} />
+            <DocumentosPorTipo
+              documentos={documentos}
+              abriendoId={abriendoId}
+              onVer={verDocumento}
+              puedeEliminar={puedeSubir}
+              onEliminar={eliminarDocumento}
+              eliminandoId={eliminandoId}
+            />
           </div>
         </div>
 
