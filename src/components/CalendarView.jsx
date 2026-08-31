@@ -22,32 +22,54 @@ function diasDeAtraso(due_date) {
   return Math.round((hoy - fecha) / (1000 * 60 * 60 * 24))
 }
 
-// ── Indicador de estado de facturación — solo visible para Contabilidad ──
-// 🟢 cobrada · 🟡 facturada, pendiente de cobro · 🔴 sin factura registrada
+// ── Indicador de estado de facturación — solo visible para Contabilidad/Gerencia ──
+// Pensado para baja visión: en vez de un punto pequeño, se usa una franja de
+// color gruesa (borde lateral) que cubre toda la altura de la tarjeta de la
+// OT — mucho más fácil de detectar de un vistazo que un círculo diminuto.
+// Donde hay espacio (modal del día, lista de atrasadas) se añade además una
+// etiqueta de texto corta y en mayúsculas, con buen contraste.
 const ESTADO_FACTURA_CFG = {
-  cobrado: { color: '#4ade80', titulo: 'Factura cobrada' },
-  pendiente: { color: '#facc15', titulo: 'Factura registrada — pendiente de cobro' },
-  sin_factura: { color: '#f87171', titulo: 'Sin factura registrada' },
+  cobrado: { color: '#4ade80', titulo: 'Factura cobrada', texto: 'COBRADA', icono: '✓' },
+  pendiente: { color: '#facc15', titulo: 'Factura registrada — pendiente de cobro', texto: 'FACTURADA', icono: '$' },
+  sin_factura: { color: '#f87171', titulo: 'Sin factura registrada', texto: 'SIN FACTURA', icono: '!' },
 }
 
-function IndicadorFactura({ estado }) {
+// Chip grande con ícono + texto — usado donde hay espacio (modal, atrasadas)
+function ChipFactura({ estado }) {
   const cfg = ESTADO_FACTURA_CFG[estado]
   if (!cfg) return null
   return (
     <span
       title={cfg.titulo}
       style={{
-        display: 'inline-block',
-        width: 7,
-        height: 7,
-        borderRadius: '50%',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 800,
+        letterSpacing: 0.5,
+        color: '#0a0e14',
         background: cfg.color,
-        marginRight: 4,
+        borderRadius: 6,
+        padding: '3px 9px',
         flexShrink: 0,
-        boxShadow: `0 0 4px ${cfg.color}`,
       }}
-    />
+    >
+      <span style={{ fontSize: 13, lineHeight: 1 }}>{cfg.icono}</span>
+      {cfg.texto}
+    </span>
   )
+}
+
+// Franja lateral gruesa — usada dentro de las celdas del calendario, donde
+// el espacio es muy limitado. Devuelve el estilo a fusionar en el contenedor.
+function franjaFacturaStyle(estado) {
+  const cfg = ESTADO_FACTURA_CFG[estado]
+  if (!cfg) return {}
+  return {
+    borderLeft: `6px solid ${cfg.color}`,
+    boxShadow: `inset 3px 0 0 ${cfg.color}`,
+  }
 }
 
 // Modal: muestra TODAS las OT de un día, sin límite — pensado para
@@ -80,18 +102,22 @@ function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorO
               key={s.id}
               onClick={() => navigate(`/ot/${s.ot_number}`)}
               className="doc-item"
-              style={{ cursor: 'pointer', padding: '10px 8px' }}
+              style={{
+                cursor: 'pointer',
+                padding: '10px 12px',
+                ...(mostrarFactura ? franjaFacturaStyle(facturaPorOT[s.ot_number] || 'sin_factura') : {}),
+              }}
             >
               <div>
-                <strong style={{ color: colorPrioridad(s.priority), display: 'flex', alignItems: 'center' }}>
-                  {mostrarFactura && <IndicadorFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
-                  {s.ot_number}
-                </strong>
+                <strong>{s.ot_number}</strong>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
               </div>
-              <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
-                {s.priority}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {mostrarFactura && <ChipFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
+                <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
+                  {s.priority}
+                </span>
+              </div>
             </div>
           ))}
         </div>
@@ -190,8 +216,8 @@ export default function CalendarView({ services, profile }) {
   // Visible para Contabilidad (dueña del dato) y Gerencia/admin@ (supervisión).
   const mostrarFactura = ['contabilidad', 'gerencia'].includes(profile?.area)
 
-  // Solo Contabilidad necesita este cruce — se evita la consulta para el
-  // resto de áreas, que no ven el indicador.
+  // Solo Contabilidad/Gerencia necesitan este cruce — se evita la consulta
+  // para el resto de áreas, que no ven el indicador.
   useEffect(() => {
     if (!mostrarFactura) return
     async function cargarFacturas() {
@@ -285,10 +311,22 @@ export default function CalendarView({ services, profile }) {
       </div>
 
       {mostrarFactura && (
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 10, fontSize: 11, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><IndicadorFactura estado="cobrado" /> Cobrada</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><IndicadorFactura estado="pendiente" /> Facturada — pendiente de cobro</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><IndicadorFactura estado="sin_factura" /> Sin factura registrada</span>
+        <div style={{ display: 'flex', gap: 20, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+          {['cobrado', 'pendiente', 'sin_factura'].map((k) => {
+            const cfg = ESTADO_FACTURA_CFG[k]
+            return (
+              <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  width: 20, height: 20, borderRadius: 5, background: cfg.color,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 13, fontWeight: 900, color: '#0a0e14', flexShrink: 0,
+                }}>
+                  {cfg.icono}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{cfg.titulo}</span>
+              </span>
+            )
+          })}
         </div>
       )}
 
@@ -339,16 +377,16 @@ export default function CalendarView({ services, profile }) {
                       title={`${s.ot_number} — ${s.client}`}
                       style={{
                         fontSize: 10,
-                        padding: '2px 4px',
+                        padding: '2px 4px 2px 6px',
                         borderRadius: 4,
                         background: colorPrioridad(s.priority) + '22',
                         color: colorPrioridad(s.priority),
                         overflow: 'hidden',
                         lineHeight: 1.2,
+                        ...(mostrarFactura ? franjaFacturaStyle(facturaPorOT[s.ot_number] || 'sin_factura') : {}),
                       }}
                     >
-                      <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
-                        {mostrarFactura && <IndicadorFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
+                      <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                         {s.ot_number}
                       </div>
                       <div style={{ fontSize: 9, opacity: 0.85, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
@@ -376,17 +414,25 @@ export default function CalendarView({ services, profile }) {
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No hay servicios atrasados. Buen trabajo.</p>
         )}
         {atrasadas.map((s) => (
-          <div key={s.id} className="doc-item" onClick={() => navigate(`/ot/${s.ot_number}`)} style={{ cursor: 'pointer' }}>
+          <div
+            key={s.id}
+            className="doc-item"
+            onClick={() => navigate(`/ot/${s.ot_number}`)}
+            style={{
+              cursor: 'pointer',
+              ...(mostrarFactura ? franjaFacturaStyle(facturaPorOT[s.ot_number] || 'sin_factura') : {}),
+            }}
+          >
             <div>
-              <strong style={{ display: 'inline-flex', alignItems: 'center' }}>
-                {mostrarFactura && <IndicadorFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
-                {s.ot_number}
-              </strong>
+              <strong>{s.ot_number}</strong>
               <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{s.client}</span>
             </div>
-            <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 13 }}>
-              {diasDeAtraso(s.due_date)} día{diasDeAtraso(s.due_date) !== 1 ? 's' : ''} de retraso
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {mostrarFactura && <ChipFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
+              <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 13 }}>
+                {diasDeAtraso(s.due_date)} día{diasDeAtraso(s.due_date) !== 1 ? 's' : ''} de retraso
+              </span>
+            </div>
           </div>
         ))}
       </div>
