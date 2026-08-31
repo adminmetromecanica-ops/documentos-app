@@ -6,6 +6,7 @@ import UploadForm from '../components/UploadForm'
 
 const WEBHOOK_URL_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/url-documento"
 const WEBHOOK_URL_LEER_FACTURA = "https://panel.5-189-165-144.sslip.io/api-patrones/leer-factura-ia"
+const WEBHOOK_SUBIR_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/subir-documento"
 
 // Visibilidad cruzada de solo lectura (igual que las políticas de MinIO/RLS)
 const VISIBILIDAD_CRUZADA = {
@@ -25,6 +26,36 @@ const CONDICIONES_PAGO = [
 ]
 
 const DIAS_UMBRAL_POR_VENCER = 5
+
+// Íconos por tipo de documento (ajusta o agrega según tus tipos reales)
+const ICONOS_TIPO_DOCUMENTO = {
+  'Certificado': '📜',
+  'Informe': '📊',
+  'Acta de Conformidad': '✅',
+  'Factura': '🧾',
+  'Guía de Remisión': '🚚',
+  'Orden de Compra': '🛒',
+  'Cotización': '💵',
+  'Contrato': '📑',
+  'Ficha OT': '🗂',
+  'Sin clasificar': '📄',
+}
+function iconoTipoDocumento(tipo) {
+  return ICONOS_TIPO_DOCUMENTO[tipo] || '📄'
+}
+
+// Agrupa documentos por tipo_documento y ordena por cantidad descendente
+function agruparDocumentosPorTipo(documentos) {
+  const grupos = {}
+  for (const doc of documentos) {
+    const tipo = doc.tipo_documento || 'Sin clasificar'
+    if (!grupos[tipo]) grupos[tipo] = []
+    grupos[tipo].push(doc)
+  }
+  return Object.entries(grupos)
+    .map(([tipo, docs]) => ({ tipo, docs }))
+    .sort((a, b) => b.docs.length - a.docs.length)
+}
 
 async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
   try {
@@ -209,6 +240,76 @@ const LayoutCSS = () => (
       color: var(--text-muted);
       margin: 4px 0 2px;
     }
+    .doc-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .doc-group {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.015);
+    }
+    .doc-group-header {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(45,212,191,0.06);
+      border: none;
+      cursor: pointer;
+      color: var(--text-light, #e2e8f0);
+      font-family: inherit;
+      transition: background 0.15s ease;
+    }
+    .doc-group-header:hover {
+      background: rgba(45,212,191,0.12);
+    }
+    .doc-group-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .doc-group-chevron {
+      font-size: 10px;
+      color: var(--ocean-accent);
+      transition: transform 0.2s ease;
+      display: inline-block;
+    }
+    .doc-group-icon {
+      font-size: 15px;
+    }
+    .doc-group-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .doc-group-badge {
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--ocean-accent);
+      color: #06251f;
+      border-radius: 999px;
+      padding: 2px 10px;
+      min-width: 22px;
+      text-align: center;
+    }
+    .doc-group-body {
+      display: grid;
+      transition: grid-template-rows 0.25s ease;
+    }
+    .doc-group-body-inner {
+      overflow: hidden;
+      padding: 0 12px;
+    }
+    .doc-group-body-inner .doc-item {
+      padding: 10px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-group-body-inner .doc-item:last-child {
+      border-bottom: none;
+    }
     @media (max-width: 900px) {
       .otdetail-grid { grid-template-columns: 1fr; }
       .otdetail-sidebar { position: static; top: auto; }
@@ -331,6 +432,85 @@ function formatFechaObs(fechaIso) {
   })
 }
 
+// Lista de documentos agrupada por tipo, con contador y colapso/expansión
+function DocumentosPorTipo({ documentos, abriendoId, onVer }) {
+  const grupos = agruparDocumentosPorTipo(documentos)
+  const [expandido, setExpandido] = useState(() => {
+    const inicial = {}
+    grupos.forEach((g, i) => { inicial[g.tipo] = i === 0 })
+    return inicial
+  })
+
+  useEffect(() => {
+    const gruposActuales = agruparDocumentosPorTipo(documentos)
+    setExpandido((prev) => {
+      const nuevo = {}
+      gruposActuales.forEach((g, i) => {
+        nuevo[g.tipo] = g.tipo in prev ? prev[g.tipo] : i === 0
+      })
+      return nuevo
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentos])
+
+  function toggle(tipo) {
+    setExpandido((prev) => ({ ...prev, [tipo]: !prev[tipo] }))
+  }
+
+  if (grupos.length === 0) {
+    return <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>
+  }
+
+  return (
+    <div className="doc-groups">
+      {grupos.map((g) => (
+        <div key={g.tipo} className="doc-group">
+          <button className="doc-group-header" onClick={() => toggle(g.tipo)}>
+            <span className="doc-group-header-left">
+              <span
+                className="doc-group-chevron"
+                style={{ transform: expandido[g.tipo] ? 'rotate(90deg)' : 'rotate(0deg)' }}
+              >
+                ▶
+              </span>
+              <span className="doc-group-icon">{iconoTipoDocumento(g.tipo)}</span>
+              <span className="doc-group-title">{g.tipo}</span>
+            </span>
+            <span className="doc-group-badge">{g.docs.length}</span>
+          </button>
+          <div
+            className="doc-group-body"
+            style={{ gridTemplateRows: expandido[g.tipo] ? '1fr' : '0fr' }}
+          >
+            <div className="doc-group-body-inner">
+              {g.docs.map((d) => (
+                <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div style={{ flex: 1, overflow: 'hidden' }}>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                      {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
+                      {' · '}
+                      {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
+                    disabled={abriendoId === d.id}
+                    onClick={() => onVer(d)}
+                  >
+                    {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function EquiposIngresadosCard({ ingresos }) {
   if (!ingresos || ingresos.length === 0) {
     return (
@@ -442,7 +622,7 @@ function FacturaDropzone({ onFile, leyendo }) {
   )
 }
 
-function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
+function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocumentoSubido }) {
   const [cobranza, setCobranza] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
@@ -464,6 +644,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
     cliente_correo: '',
     cliente_telefono: '',
     // ── Campos ampliados para seguimiento de facturación (Contabilidad) ──
+    cliente_nombre: '',
     ruc_emisor: '',
     razon_social_emisor: '',
     ruc_cliente: '',
@@ -500,6 +681,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
         referencia_oc: data.referencia_oc || '',
         cliente_correo: data.cliente_correo || '',
         cliente_telefono: data.cliente_telefono || '',
+        cliente_nombre: data.cliente_nombre || '',
         ruc_emisor: data.ruc_emisor || '',
         razon_social_emisor: data.razon_social_emisor || '',
         ruc_cliente: data.ruc_cliente || '',
@@ -536,6 +718,36 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
     }))
   }
 
+  // ── Sube el PDF de la factura como documento del área Contabilidad ──
+  // Antes, arrastrar la factura solo la enviaba a la IA para leer los datos;
+  // el archivo nunca quedaba guardado en "Documentos subidos". Ahora se sube
+  // en paralelo a MinIO con tipo_documento "Factura", independientemente de
+  // si la lectura con IA tiene éxito o no, y se avisa al padre para refrescar
+  // la lista de documentos de la OT.
+  async function subirFacturaComoDocumento(file) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const fd = new FormData()
+      fd.append('file', file, file.name)
+      fd.append('ot_number', otNumber)
+      fd.append('area', 'contabilidad')
+      fd.append('tipo_documento', 'Factura')
+      fd.append('subcarpeta', 'Factura')
+      fd.append('nombre_archivo', file.name)
+      fd.append('subido_por', user?.id || profile?.id || '')
+
+      const resp = await fetch(WEBHOOK_SUBIR_DOCUMENTO, { method: 'POST', body: fd })
+      if (!resp.ok) {
+        console.error('Error subiendo factura a MinIO:', await resp.text())
+        return
+      }
+      registrarAuditoria(profile.id, 'subir_factura', otNumber, file.name)
+      onDocumentoSubido && onDocumentoSubido()
+    } catch (e) {
+      console.error('Error subiendo factura a MinIO:', e)
+    }
+  }
+
   async function handleArchivoPDF(file) {
     if (!file || file.type !== 'application/pdf') {
       alert('Solo se aceptan archivos PDF.')
@@ -544,6 +756,11 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
     setLeyendoPDF(true)
     setAvisos([])
     setDatosIA(null)
+
+    // Subir el documento a la lista de "Documentos subidos" de Contabilidad,
+    // en paralelo a la lectura con IA — no depende de que la IA tenga éxito.
+    subirFacturaComoDocumento(file)
+
     try {
       const imagenBase64 = await renderizarPrimeraPaginaComoImagen(file)
       const datos = await leerFacturaConIA(imagenBase64)
@@ -578,6 +795,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
         numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
         moneda: datos.moneda || prev.moneda,
         referencia_oc: datos.referencia_oc || prev.referencia_oc,
+        cliente_nombre: datos.cliente_nombre || prev.cliente_nombre,
         ruc_emisor: datos.ruc_emisor || prev.ruc_emisor,
         razon_social_emisor: datos.razon_social_emisor || prev.razon_social_emisor,
         ruc_cliente: datos.ruc_cliente || prev.ruc_cliente,
@@ -620,6 +838,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
       cliente_correo: form.cliente_correo.trim() || null,
       cliente_telefono: form.cliente_telefono.trim() || null,
       // ── Campos ampliados ──
+      cliente_nombre: form.cliente_nombre.trim() || null,
       ruc_emisor: form.ruc_emisor.trim() || null,
       razon_social_emisor: form.razon_social_emisor.trim() || null,
       ruc_cliente: form.ruc_cliente.trim() || null,
@@ -748,8 +967,10 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
               <b>Emisor:</b> {cobranza.razon_social_emisor || '—'} {cobranza.ruc_emisor && `· RUC: ${cobranza.ruc_emisor}`}
             </div>
           )}
-          {cobranza.ruc_cliente && (
-            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>RUC Cliente:</b> {cobranza.ruc_cliente}</div>
+          {(cobranza.cliente_nombre || cobranza.ruc_cliente) && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+              <b>Cliente:</b> {cobranza.cliente_nombre || '—'} {cobranza.ruc_cliente && `· RUC: ${cobranza.ruc_cliente}`}
+            </div>
           )}
           {cobranza.direccion_cliente && (
             <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>Dirección:</b> {cobranza.direccion_cliente}</div>
@@ -832,15 +1053,19 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
               <input value={form.razon_social_emisor} onChange={(e) => set('razon_social_emisor', e.target.value)} placeholder="Empresa emisora" />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+            <div>
+              <label>Razón Social Cliente</label>
+              <input value={form.cliente_nombre} onChange={(e) => set('cliente_nombre', e.target.value)} placeholder="Nombre del cliente que recibe la factura" />
+            </div>
             <div>
               <label>RUC Cliente</label>
               <input value={form.ruc_cliente} onChange={(e) => set('ruc_cliente', e.target.value)} placeholder="20510248261" />
             </div>
-            <div>
-              <label>Dirección Cliente</label>
-              <input value={form.direccion_cliente} onChange={(e) => set('direccion_cliente', e.target.value)} placeholder="Dirección fiscal" />
-            </div>
+          </div>
+          <div>
+            <label>Dirección Cliente</label>
+            <input value={form.direccion_cliente} onChange={(e) => set('direccion_cliente', e.target.value)} placeholder="Dirección fiscal" />
           </div>
 
           <div className="cobranza-subtitle">Fechas y Condición</div>
@@ -1246,6 +1471,7 @@ export default function OTDetail({ profile }) {
               clienteOT={service?.client}
               puedeEditar={puedeSubir}
               profile={profile}
+              onDocumentoSubido={loadDocumentos}
             />
           )}
 
@@ -1268,27 +1494,7 @@ export default function OTDetail({ profile }) {
 
           <div className="card">
             <div className="otdetail-section-label">Documentos subidos</div>
-            {documentos.length === 0 && <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>}
-            {documentos.map((d) => (
-              <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                    {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
-                    {' · '}
-                    {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
-                  disabled={abriendoId === d.id}
-                  onClick={() => verDocumento(d)}
-                >
-                  {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
-                </button>
-              </div>
-            ))}
+            <DocumentosPorTipo documentos={documentos} abriendoId={abriendoId} onVer={verDocumento} />
           </div>
         </div>
 
