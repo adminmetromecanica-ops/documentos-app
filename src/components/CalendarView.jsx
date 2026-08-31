@@ -23,11 +23,12 @@ function diasDeAtraso(due_date) {
 }
 
 // ── Indicador de estado de facturación — solo visible para Contabilidad/Gerencia ──
-// Pensado para baja visión: en vez de un punto pequeño, se usa una franja de
-// color gruesa (borde lateral) que cubre toda la altura de la tarjeta de la
-// OT — mucho más fácil de detectar de un vistazo que un círculo diminuto.
-// Donde hay espacio (modal del día, lista de atrasadas) se añade además una
-// etiqueta de texto corta y en mayúsculas, con buen contraste.
+// Antes competía con el color de prioridad de la OT (mismo esquema rojo/
+// amarillo/gris para dos cosas distintas → confuso, especialmente con baja
+// visión). Ahora, cuando esta vista está activa, el color de PRIORIDAD deja
+// de usarse: todo el color de la tarjeta pasa a representar únicamente el
+// estado de la factura, y el texto queda en un tono neutro. Un solo
+// semáforo, un solo significado.
 const ESTADO_FACTURA_CFG = {
   cobrado: { color: '#4ade80', titulo: 'Factura cobrada', texto: 'COBRADA', icono: '✓' },
   pendiente: { color: '#facc15', titulo: 'Factura registrada — pendiente de cobro', texto: 'FACTURADA', icono: '$' },
@@ -61,14 +62,36 @@ function ChipFactura({ estado }) {
   )
 }
 
-// Franja lateral gruesa — usada dentro de las celdas del calendario, donde
-// el espacio es muy limitado. Devuelve el estilo a fusionar en el contenedor.
-function franjaFacturaStyle(estado) {
+// Estilo de la tarjeta de una OT dentro de una celda del calendario.
+// - Vista normal (mostrarFactura=false): color por prioridad, como siempre.
+// - Vista Contabilidad/Gerencia (mostrarFactura=true): color SOLO por estado
+//   de factura — fondo tintado + franja lateral del mismo color, texto
+//   neutro. Se evita mezclar dos semáforos con la misma paleta.
+function estiloItemCelda(s, mostrarFactura, facturaPorOT) {
+  if (mostrarFactura) {
+    const estado = facturaPorOT[s.ot_number] || 'sin_factura'
+    const cfg = ESTADO_FACTURA_CFG[estado]
+    return {
+      background: `${cfg.color}26`,
+      borderLeft: `6px solid ${cfg.color}`,
+      color: 'var(--text)',
+    }
+  }
+  const color = colorPrioridad(s.priority)
+  return {
+    background: `${color}22`,
+    color,
+  }
+}
+
+// Estilo de fila (modal / lista de atrasadas) — misma lógica, adaptada a
+// filas horizontales en vez de tarjetas de celda.
+function estiloFila(mostrarFactura, estado) {
+  if (!mostrarFactura) return {}
   const cfg = ESTADO_FACTURA_CFG[estado]
-  if (!cfg) return {}
   return {
     borderLeft: `6px solid ${cfg.color}`,
-    boxShadow: `inset 3px 0 0 ${cfg.color}`,
+    background: `${cfg.color}14`,
   }
 }
 
@@ -97,29 +120,35 @@ function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorO
           <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
         </div>
         <div style={{ overflowY: 'auto', padding: '8px 12px' }}>
-          {items.map((s) => (
-            <div
-              key={s.id}
-              onClick={() => navigate(`/ot/${s.ot_number}`)}
-              className="doc-item"
-              style={{
-                cursor: 'pointer',
-                padding: '10px 12px',
-                ...(mostrarFactura ? franjaFacturaStyle(facturaPorOT[s.ot_number] || 'sin_factura') : {}),
-              }}
-            >
-              <div>
-                <strong>{s.ot_number}</strong>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
+          {items.map((s) => {
+            const estadoFactura = facturaPorOT[s.ot_number] || 'sin_factura'
+            return (
+              <div
+                key={s.id}
+                onClick={() => navigate(`/ot/${s.ot_number}`)}
+                className="doc-item"
+                style={{
+                  cursor: 'pointer',
+                  padding: '10px 12px',
+                  ...estiloFila(mostrarFactura, estadoFactura),
+                }}
+              >
+                <div>
+                  <strong>{s.ot_number}</strong>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {mostrarFactura ? (
+                    <ChipFactura estado={estadoFactura} />
+                  ) : (
+                    <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
+                      {s.priority}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {mostrarFactura && <ChipFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
-                <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
-                  {s.priority}
-                </span>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>
@@ -311,22 +340,27 @@ export default function CalendarView({ services, profile }) {
       </div>
 
       {mostrarFactura && (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-          {['cobrado', 'pendiente', 'sin_factura'].map((k) => {
-            const cfg = ESTADO_FACTURA_CFG[k]
-            return (
-              <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{
-                  width: 20, height: 20, borderRadius: 5, background: cfg.color,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 13, fontWeight: 900, color: '#0a0e14', flexShrink: 0,
-                }}>
-                  {cfg.icono}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+            {['cobrado', 'pendiente', 'sin_factura'].map((k) => {
+              const cfg = ESTADO_FACTURA_CFG[k]
+              return (
+                <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    width: 20, height: 20, borderRadius: 5, background: cfg.color,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 13, fontWeight: 900, color: '#0a0e14', flexShrink: 0,
+                  }}>
+                    {cfg.icono}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{cfg.titulo}</span>
                 </span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{cfg.titulo}</span>
-              </span>
-            )
-          })}
+              )
+            })}
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>
+            En esta vista el color indica solo el estado de la factura — no la prioridad del servicio.
+          </p>
         </div>
       )}
 
@@ -379,11 +413,9 @@ export default function CalendarView({ services, profile }) {
                         fontSize: 10,
                         padding: '2px 4px 2px 6px',
                         borderRadius: 4,
-                        background: colorPrioridad(s.priority) + '22',
-                        color: colorPrioridad(s.priority),
                         overflow: 'hidden',
                         lineHeight: 1.2,
-                        ...(mostrarFactura ? franjaFacturaStyle(facturaPorOT[s.ot_number] || 'sin_factura') : {}),
+                        ...estiloItemCelda(s, mostrarFactura, facturaPorOT),
                       }}
                     >
                       <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
@@ -413,28 +445,31 @@ export default function CalendarView({ services, profile }) {
         {atrasadas.length === 0 && (
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No hay servicios atrasados. Buen trabajo.</p>
         )}
-        {atrasadas.map((s) => (
-          <div
-            key={s.id}
-            className="doc-item"
-            onClick={() => navigate(`/ot/${s.ot_number}`)}
-            style={{
-              cursor: 'pointer',
-              ...(mostrarFactura ? franjaFacturaStyle(facturaPorOT[s.ot_number] || 'sin_factura') : {}),
-            }}
-          >
-            <div>
-              <strong>{s.ot_number}</strong>
-              <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{s.client}</span>
+        {atrasadas.map((s) => {
+          const estadoFactura = facturaPorOT[s.ot_number] || 'sin_factura'
+          return (
+            <div
+              key={s.id}
+              className="doc-item"
+              onClick={() => navigate(`/ot/${s.ot_number}`)}
+              style={{
+                cursor: 'pointer',
+                ...estiloFila(mostrarFactura, estadoFactura),
+              }}
+            >
+              <div>
+                <strong>{s.ot_number}</strong>
+                <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{s.client}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {mostrarFactura && <ChipFactura estado={estadoFactura} />}
+                <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 13 }}>
+                  {diasDeAtraso(s.due_date)} día{diasDeAtraso(s.due_date) !== 1 ? 's' : ''} de retraso
+                </span>
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {mostrarFactura && <ChipFactura estado={facturaPorOT[s.ot_number] || 'sin_factura'} />}
-              <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 13 }}>
-                {diasDeAtraso(s.due_date)} día{diasDeAtraso(s.due_date) !== 1 ? 's' : ''} de retraso
-              </span>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {diaSeleccionado && (
