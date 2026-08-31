@@ -81,6 +81,69 @@ function KpiCard({ label, value, sub, color }) {
   )
 }
 
+// ── Recordatorios de cobro por WhatsApp / correo ──────────────────────────
+// Arma el mensaje y abre el enlace correspondiente — no hay envío automático
+// ni backend involucrado, así que no hace falta ningún permiso adicional;
+// el usuario revisa el mensaje antes de enviarlo, tal como abriría WhatsApp
+// o su correo manualmente.
+function normalizarTelefonoWhatsApp(telefono) {
+  if (!telefono) return null
+  const soloDigitos = telefono.replace(/[^\d]/g, '')
+  if (!soloDigitos) return null
+  // Si ya trae código de país (empieza con 51 y tiene 11 dígitos) lo dejamos
+  // tal cual; si parece un celular peruano de 9 dígitos, le anteponemos 51.
+  if (soloDigitos.length === 9) return `51${soloDigitos}`
+  return soloDigitos
+}
+
+function armarMensajeRecordatorio(c, cliente, semaforo) {
+  const monto = fmtMoneda(montoACobrar(c), c.moneda)
+  const vencimiento = fmtFecha(c.fecha_vencimiento)
+  if (semaforo.key === 'vencido') {
+    return `Hola${cliente ? ' ' + cliente : ''}, le escribimos de MetroMecánica respecto a la factura ${c.numero_factura} por ${monto}, cuyo vencimiento fue el ${vencimiento}. Quedamos atentos para coordinar el pago. Gracias.`
+  }
+  return `Hola${cliente ? ' ' + cliente : ''}, le recordamos de MetroMecánica que la factura ${c.numero_factura} por ${monto} vence el ${vencimiento}. Quedamos atentos. Gracias.`
+}
+
+function BotonesRecordatorio({ c, cliente, semaforo }) {
+  const telefono = normalizarTelefonoWhatsApp(c.cliente_telefono)
+  const correo = c.cliente_correo
+  if (!telefono && !correo) {
+    return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Sin contacto</span>
+  }
+  const mensaje = armarMensajeRecordatorio(c, cliente, semaforo)
+  const linkWhatsApp = telefono ? `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}` : null
+  const linkCorreo = correo
+    ? `mailto:${correo}?subject=${encodeURIComponent(`Recordatorio de pago — Factura ${c.numero_factura}`)}&body=${encodeURIComponent(mensaje)}`
+    : null
+  return (
+    <div style={{ display: 'flex', gap: 6 }}>
+      {linkWhatsApp && (
+        <a
+          href={linkWhatsApp}
+          target="_blank"
+          rel="noreferrer"
+          title={`Enviar recordatorio por WhatsApp a ${c.cliente_telefono}`}
+          className="btn btn-secondary"
+          style={{ fontSize: 11, padding: '4px 8px', textDecoration: 'none' }}
+        >
+          💬
+        </a>
+      )}
+      {linkCorreo && (
+        <a
+          href={linkCorreo}
+          title={`Enviar recordatorio por correo a ${correo}`}
+          className="btn btn-secondary"
+          style={{ fontSize: 11, padding: '4px 8px', textDecoration: 'none' }}
+        >
+          📧
+        </a>
+      )}
+    </div>
+  )
+}
+
 export default function SeguimientoFacturas({ profile, onLogout }) {
   const navigate = useNavigate()
   const [tab, setTab] = useState('facturas') // 'facturas' | 'sin_factura'
@@ -198,12 +261,14 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     const pendientes = cobranzas.filter((c) => c.estado !== 'cobrado')
     const vencidas = pendientes.filter((c) => calcularSemaforo(c).key === 'vencido')
     const porVencer = pendientes.filter((c) => calcularSemaforo(c).key === 'por_vencer')
+    const sinContacto = pendientes.filter((c) => !c.cliente_correo && !c.cliente_telefono)
     const montoPendienteTotal = pendientes.reduce((acc, c) => acc + montoACobrar(c), 0)
     const montoVencidoTotal = vencidas.reduce((acc, c) => acc + montoACobrar(c), 0)
     return {
       totalPendientes: pendientes.length,
       totalVencidas: vencidas.length,
       totalPorVencer: porVencer.length,
+      totalSinContacto: sinContacto.length,
       montoPendienteTotal,
       montoVencidoTotal,
     }
@@ -347,6 +412,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
             <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#f87171" />
             <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#facc15" />
             <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#f97316" />
+            <KpiCard label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#94a3b8" />
           </div>
 
           {/* ── KPIs del mes seleccionado ── */}
@@ -404,7 +470,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', ''].map((h) => (
+                      {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', 'Recordar', ''].map((h) => (
                         <th
                           key={h}
                           style={{
@@ -448,6 +514,9 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                             <span style={{ fontSize: 11, fontWeight: 700, color: semaforo.color, background: `${semaforo.color}22`, borderRadius: 20, padding: '3px 10px' }}>
                               {semaforo.label}
                             </span>
+                          </td>
+                          <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
+                            {c.estado !== 'cobrado' && <BotonesRecordatorio c={c} cliente={cliente} semaforo={semaforo} />}
                           </td>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                             {puedeEditar && c.estado !== 'cobrado' && (
