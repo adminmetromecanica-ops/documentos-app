@@ -282,8 +282,7 @@ function construirLinkCorreo(destinatario, asunto, cuerpo) {
   return `https://mail.google.com/mail/?${params.toString()}`
 }
 
-function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
-  const [buscandoDocs, setBuscandoDocs] = useState(false)
+function BotonesRecordatorio({ c, cliente, semaforo, contacto, onAbrirCorreo }) {
   const telefono = normalizarTelefonoWhatsApp(contacto.telefono)
   const correo = contacto.correo
   if (!telefono && !correo) {
@@ -291,26 +290,6 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
   }
   const mensaje = armarMensajeRecordatorio(c, cliente, semaforo)
   const linkWhatsApp = telefono ? `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}` : null
-
-  // Al hacer clic: busca la factura y la OC/proforma de esta OT, agrega sus
-  // enlaces al final del mensaje, y recién ahí abre Gmail. Ningún proveedor
-  // de correo permite adjuntar un archivo automáticamente desde un enlace,
-  // así que la vía confiable es incluir el enlace de visualización dentro
-  // del propio texto.
-  async function enviarPorCorreo() {
-    setBuscandoDocs(true)
-    const enlaces = await buscarEnlacesDocumentos(c.ot_number)
-    let mensajeFinal = mensaje
-    const lineasDocs = []
-    if (enlaces.factura) lineasDocs.push(`📄 Factura (${enlaces.factura.nombre}): ${enlaces.factura.url}`)
-    if (enlaces.ordenCompra) lineasDocs.push(`📄 ${enlaces.ordenCompra.tipo} (${enlaces.ordenCompra.nombre}): ${enlaces.ordenCompra.url}`)
-    if (lineasDocs.length > 0) {
-      mensajeFinal += '\n\nDocumentos:\n' + lineasDocs.join('\n')
-    }
-    const link = construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensajeFinal)
-    window.open(link, '_blank', 'noopener,noreferrer')
-    setBuscandoDocs(false)
-  }
 
   const estiloIcono = {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -335,16 +314,96 @@ function BotonesRecordatorio({ c, cliente, semaforo, contacto }) {
       )}
       {correo && (
         <button
-          onClick={enviarPorCorreo}
-          disabled={buscandoDocs}
-          title={`Enviar recordatorio por correo a ${correo} (Gmail — ${CORREO_REMITENTE_CONTABILIDAD})`}
-          style={{ ...estiloIcono, background: '#3f6ea6', opacity: buscandoDocs ? 0.7 : 1 }}
-          onMouseEnter={(e) => { if (!buscandoDocs) e.currentTarget.style.transform = 'scale(1.1)' }}
+          onClick={() => onAbrirCorreo(c, cliente, correo, mensaje)}
+          title={`Ver recordatorio para ${correo}`}
+          style={{ ...estiloIcono, background: '#3f6ea6' }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)' }}
           onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
         >
-          {buscandoDocs ? '⏳' : '📧'}
+          📧
         </button>
       )}
+    </div>
+  )
+}
+
+// ── Modal de recordatorio por correo — vive dentro de la plataforma ──────
+// En vez de saltar directo a una pestaña de Gmail, muestra el mensaje (ya
+// editable) y los documentos encontrados, para revisar antes de enviar.
+// "Abrir en Gmail" solo se dispara cuando la persona lo pide explícitamente.
+function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje }) {
+  const { c, correo, mensaje, cargandoDocs, documentos } = datos
+
+  function copiarMensaje() {
+    navigator.clipboard.writeText(mensaje)
+  }
+
+  function abrirGmail() {
+    const link = construirLinkCorreo(correo, `Recordatorio de pago — Factura ${c.numero_factura}`, mensaje)
+    window.open(link, '_blank', 'noopener,noreferrer')
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{ width: '100%', maxWidth: 620, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
+      >
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <strong style={{ fontSize: 15 }}>📧 Recordatorio — Factura {c.numero_factura}</strong>
+          <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+        </div>
+
+        <div style={{ padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Para</label>
+            <input value={correo} readOnly />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Mensaje (editable)</label>
+            <textarea
+              value={mensaje}
+              onChange={(e) => onCambiarMensaje(e.target.value)}
+              rows={12}
+              style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.5 }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
+            {cargandoDocs ? (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 0' }}>⏳ Buscando factura y OC/proforma de esta OT...</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                {documentos?.factura ? (
+                  <a href={documentos.factura.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none' }}>
+                    👁 Ver factura — {documentos.factura.nombre}
+                  </a>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin factura subida en Documentos para esta OT.</span>
+                )}
+                {documentos?.ordenCompra ? (
+                  <a href={documentos.ordenCompra.url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none' }}>
+                    👁 Ver {documentos.ordenCompra.tipo} — {documentos.ordenCompra.nombre}
+                  </a>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin Orden de Compra/Cotización subida en Documentos para esta OT.</span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
+          <button className="btn" onClick={abrirGmail}>📧 Abrir en Gmail para enviar</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -434,6 +493,17 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   const [filtroEstado, setFiltroEstado] = useState('todas') // todas | vencido | por_vencer | pendiente | cobrado
   const [busqueda, setBusqueda] = useState('')
   const [guardandoId, setGuardandoId] = useState(null)
+  const [modalCorreo, setModalCorreo] = useState(null)
+
+  // Abre el modal de inmediato con el mensaje ya armado, y busca los
+  // documentos (factura / OC-proforma) en paralelo — no bloquea la
+  // apertura del modal esperando la búsqueda.
+  function abrirModalCorreo(c, cliente, correo, mensaje) {
+    setModalCorreo({ c, correo, mensaje, cargandoDocs: true, documentos: null })
+    buscarEnlacesDocumentos(c.ot_number).then((docs) => {
+      setModalCorreo((prev) => (prev && prev.c.id === c.id ? { ...prev, cargandoDocs: false, documentos: docs } : prev))
+    })
+  }
 
   const acceso = AREAS_PERMITIDAS.includes(profile?.area)
   const puedeEditar = profile?.area === AREA_EDITA
@@ -949,7 +1019,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                             </div>
                           </td>
                           <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                            {c.estado !== 'cobrado' && <BotonesRecordatorio c={c} cliente={cliente} semaforo={semaforo} contacto={contacto} />}
+                            {c.estado !== 'cobrado' && <BotonesRecordatorio c={c} cliente={cliente} semaforo={semaforo} contacto={contacto} onAbrirCorreo={abrirModalCorreo} />}
                           </td>
                         </tr>
                       )
@@ -1144,6 +1214,14 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
             )}
           </div>
         </>
+      )}
+
+      {modalCorreo && (
+        <ModalRecordatorioCorreo
+          datos={modalCorreo}
+          onClose={() => setModalCorreo(null)}
+          onCambiarMensaje={(nuevoMensaje) => setModalCorreo((prev) => ({ ...prev, mensaje: nuevoMensaje }))}
+        />
       )}
     </div>
   )
