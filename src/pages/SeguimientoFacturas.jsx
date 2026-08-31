@@ -36,17 +36,17 @@ function diasHasta(fechaStr) {
 
 function calcularSemaforo(c) {
   if (c.estado === 'cobrado') {
-    return { key: 'cobrado', label: '✅ Cobrado', color: '#4ade80' }
+    return { key: 'cobrado', label: '✅ Cobrado', color: '#6fa87c' }
   }
   const dias = diasHasta(c.fecha_vencimiento)
-  if (dias == null) return { key: 'sin_fecha', label: '— Sin fecha', color: '#94a3b8' }
+  if (dias == null) return { key: 'sin_fecha', label: '— Sin fecha', color: '#a89f91' }
   if (dias < 0) {
-    return { key: 'vencido', label: `⚠ Vencida hace ${Math.abs(dias)}d`, color: '#f87171' }
+    return { key: 'vencido', label: `⚠ Vencida hace ${Math.abs(dias)}d`, color: '#d9704f' }
   }
   if (dias <= DIAS_UMBRAL_POR_VENCER) {
-    return { key: 'por_vencer', label: dias === 0 ? '⏰ Vence hoy' : `⏰ Vence en ${dias}d`, color: '#facc15' }
+    return { key: 'por_vencer', label: dias === 0 ? '⏰ Vence hoy' : `⏰ Vence en ${dias}d`, color: '#e0a458' }
   }
-  return { key: 'pendiente', label: 'Pendiente', color: '#94a3b8' }
+  return { key: 'pendiente', label: 'Pendiente', color: '#a89f91' }
 }
 
 function montoACobrar(c) {
@@ -454,7 +454,43 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   }
 
   return (
-    <div className="container container-ancho" style={{ maxWidth: 1300, margin: '0 auto' }}>
+    <div className="container container-ancho seguimiento-tema-calido" style={{ maxWidth: 1300, margin: '0 auto' }}>
+      <style>{`
+        /* ── Acento cálido solo para esta pantalla ──────────────────────
+           No se toca el fondo oscuro base ni ninguna otra página: estos
+           estilos viven bajo .seguimiento-tema-calido y no existen en
+           ningún otro lugar de la app, así que no hay riesgo de que se
+           filtren a Portal, Dashboard, OTDetail, etc. */
+        .seguimiento-tema-calido {
+          --ocean-accent: #6fa87c;
+        }
+        .seguimiento-tema-calido .card {
+          border-radius: 16px;
+          border-color: rgba(224, 164, 88, 0.22);
+          background: linear-gradient(180deg, rgba(224, 164, 88, 0.05), rgba(111, 168, 122, 0.02));
+        }
+        .seguimiento-tema-calido .btn {
+          background: #6fa87c;
+          color: #0f2016;
+          border-radius: 10px;
+          border: none;
+        }
+        .seguimiento-tema-calido .btn:hover {
+          filter: brightness(1.08);
+        }
+        .seguimiento-tema-calido .btn-secondary {
+          border-radius: 10px;
+          border-color: rgba(224, 164, 88, 0.35);
+          background: rgba(224, 164, 88, 0.08);
+        }
+        .seguimiento-tema-calido .btn-secondary:hover {
+          background: rgba(224, 164, 88, 0.16);
+        }
+        .seguimiento-tema-calido input,
+        .seguimiento-tema-calido select {
+          border-radius: 10px;
+        }
+      `}</style>
       <div className="top-bar" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al panel</a>
@@ -494,7 +530,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           🚫 OTs sin factura
           {otsSinFacturaUrgentes.length > 0 && (
             <span style={{
-              fontSize: 11, fontWeight: 700, background: '#f87171', color: '#1a0505',
+              fontSize: 11, fontWeight: 700, background: '#d9704f', color: '#1a0505',
               borderRadius: 999, padding: '1px 7px', minWidth: 18, textAlign: 'center',
             }}>
               {otsSinFacturaUrgentes.length}
@@ -519,10 +555,10 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
           {/* ── KPIs globales ── */}
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
             <KpiCard label="Facturas pendientes" value={kpisGlobales.totalPendientes} sub={fmtMoneda(kpisGlobales.montoPendienteTotal, 'PEN')} />
-            <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#f87171" />
-            <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#facc15" />
-            <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#f97316" />
-            <KpiCard label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#94a3b8" />
+            <KpiCard label="Vencidas" value={kpisGlobales.totalVencidas} sub={fmtMoneda(kpisGlobales.montoVencidoTotal, 'PEN')} color="#d9704f" />
+            <KpiCard label={`Por vencer (≤${DIAS_UMBRAL_POR_VENCER}d)`} value={kpisGlobales.totalPorVencer} color="#e0a458" />
+            <KpiCard label="OTs sin factura" value={otsSinFactura.length} sub={`${otsSinFacturaUrgentes.length} ya deberían tenerla`} color="#c97a3f" />
+            <KpiCard label="Pendientes sin contacto" value={kpisGlobales.totalSinContacto} sub="Falta teléfono o correo" color="#a89f91" />
           </div>
 
           {/* ── KPIs del mes seleccionado ── */}
@@ -534,9 +570,9 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <KpiCard label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
               <KpiCard label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
-              <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#a78bfa" />
-              <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#f97316" />
-              <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#4ade80" />
+              <KpiCard label="IGV del mes" value={fmtMoneda(kpisMes.igvMes, 'PEN')} color="#b58ea0" />
+              <KpiCard label="Detracciones del mes" value={fmtMoneda(kpisMes.detraccionMes, 'PEN')} color="#c97a3f" />
+              <KpiCard label="Cobrado en el mes" value={fmtMoneda(kpisMes.cobradoMes, 'PEN')} sub={`${kpisMes.cantidadCobradas} factura(s)`} color="#6fa87c" />
             </div>
           </div>
 
@@ -659,7 +695,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
               label="Deberían tener factura ya"
               value={otsSinFacturaUrgentes.length}
               sub="Estado: Pend. Facturación o Concluido"
-              color="#f87171"
+              color="#d9704f"
             />
           </div>
 
@@ -724,7 +760,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                             <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(s.due_date)}</td>
                             <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                               {urge && (
-                                <span style={{ fontSize: 11, fontWeight: 700, color: '#f87171', background: '#f8717122', borderRadius: 20, padding: '3px 10px' }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#d9704f', background: '#d9704f22', borderRadius: 20, padding: '3px 10px' }}>
                                   🚫 Falta subir
                                 </span>
                               )}
@@ -776,11 +812,11 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{r.facturas}</td>
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.montoTotal, 'PEN')}</td>
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.baseImponible, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#a78bfa' }}>{fmtMoneda(r.igv, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#f97316' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#b58ea0' }}>{fmtMoneda(r.igv, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#c97a3f' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
                       <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.neto, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#4ade80' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
-                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#f87171' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#6fa87c' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#d9704f' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -820,11 +856,11 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{r.facturas}</td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.montoTotal, 'PEN')}</td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.baseImponible, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#a78bfa' }}>{fmtMoneda(r.igv, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#f97316' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#b58ea0' }}>{fmtMoneda(r.igv, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#c97a3f' }}>{fmtMoneda(r.detraccion, 'PEN')}</td>
                         <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtMoneda(r.neto, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#4ade80' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
-                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#f87171' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', color: '#6fa87c' }}>{fmtMoneda(r.cobrado, 'PEN')}</td>
+                        <td style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontWeight: 700, color: r.saldo > 0 ? '#d9704f' : 'var(--text-muted)' }}>{fmtMoneda(r.saldo, 'PEN')}</td>
                       </tr>
                     ))}
                   </tbody>
