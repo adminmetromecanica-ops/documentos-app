@@ -26,35 +26,6 @@ const CONDICIONES_PAGO = [
 
 const DIAS_UMBRAL_POR_VENCER = 5
 
-// Íconos por tipo de documento (ajusta o agrega según tus tipos reales)
-const ICONOS_TIPO_DOCUMENTO = {
-  'Certificado': '📜',
-  'Informe': '📊',
-  'Acta de Conformidad': '✅',
-  'Factura': '🧾',
-  'Guía de Remisión': '🚚',
-  'Orden de Compra': '🛒',
-  'Cotización': '💵',
-  'Contrato': '📑',
-  'Sin clasificar': '📄',
-}
-function iconoTipoDocumento(tipo) {
-  return ICONOS_TIPO_DOCUMENTO[tipo] || '📄'
-}
-
-// Agrupa documentos por tipo_documento y ordena por cantidad descendente
-function agruparDocumentosPorTipo(documentos) {
-  const grupos = {}
-  for (const doc of documentos) {
-    const tipo = doc.tipo_documento || 'Sin clasificar'
-    if (!grupos[tipo]) grupos[tipo] = []
-    grupos[tipo].push(doc)
-  }
-  return Object.entries(grupos)
-    .map(([tipo, docs]) => ({ tipo, docs }))
-    .sort((a, b) => b.docs.length - a.docs.length)
-}
-
 async function registrarAuditoria(usuarioId, accion, otNumber, detalle) {
   try {
     await supabase.from('log_auditoria').insert({
@@ -186,6 +157,8 @@ function deducirCondicionPago(datos) {
   let dias_credito = 0
   if (datos.fecha_emision && datos.fecha_vencimiento) {
     dias_credito = Math.round((new Date(datos.fecha_vencimiento) - new Date(datos.fecha_emision)) / 86400000)
+  } else if (datos.dias_credito != null) {
+    dias_credito = Number(datos.dias_credito) || 0
   }
   let condicion_pago = 'personalizado'
   if (datos.forma_pago === 'contado' || dias_credito === 0) condicion_pago = 'contado'
@@ -228,75 +201,13 @@ const LayoutCSS = () => (
       font-size: 14px;
       text-align: center;
     }
-    .doc-groups {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    .doc-group {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-      background: rgba(255,255,255,0.015);
-    }
-    .doc-group-header {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 14px;
-      background: rgba(45,212,191,0.06);
-      border: none;
-      cursor: pointer;
-      color: var(--text-light, #e2e8f0);
-      font-family: inherit;
-      transition: background 0.15s ease;
-    }
-    .doc-group-header:hover {
-      background: rgba(45,212,191,0.12);
-    }
-    .doc-group-header-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .doc-group-chevron {
+    .cobranza-subtitle {
       font-size: 10px;
-      color: var(--ocean-accent);
-      transition: transform 0.2s ease;
-      display: inline-block;
-    }
-    .doc-group-icon {
-      font-size: 15px;
-    }
-    .doc-group-title {
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .doc-group-badge {
-      font-size: 11px;
       font-weight: 700;
-      background: var(--ocean-accent);
-      color: #06251f;
-      border-radius: 999px;
-      padding: 2px 10px;
-      min-width: 22px;
-      text-align: center;
-    }
-    .doc-group-body {
-      display: grid;
-      transition: grid-template-rows 0.25s ease;
-    }
-    .doc-group-body-inner {
-      overflow: hidden;
-      padding: 0 12px;
-    }
-    .doc-group-body-inner .doc-item {
-      padding: 10px 4px;
-      border-bottom: 1px solid var(--border);
-    }
-    .doc-group-body-inner .doc-item:last-child {
-      border-bottom: none;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin: 4px 0 2px;
     }
     @media (max-width: 900px) {
       .otdetail-grid { grid-template-columns: 1fr; }
@@ -418,85 +329,6 @@ function formatFechaObs(fechaIso) {
   return new Date(fechaIso).toLocaleString('es-PE', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   })
-}
-
-// Lista de documentos agrupada por tipo, con contador y colapso/expansión
-function DocumentosPorTipo({ documentos, abriendoId, onVer }) {
-  const grupos = agruparDocumentosPorTipo(documentos)
-  const [expandido, setExpandido] = useState(() => {
-    const inicial = {}
-    grupos.forEach((g, i) => { inicial[g.tipo] = i === 0 })
-    return inicial
-  })
-
-  useEffect(() => {
-    const gruposActuales = agruparDocumentosPorTipo(documentos)
-    setExpandido((prev) => {
-      const nuevo = {}
-      gruposActuales.forEach((g, i) => {
-        nuevo[g.tipo] = g.tipo in prev ? prev[g.tipo] : i === 0
-      })
-      return nuevo
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentos])
-
-  function toggle(tipo) {
-    setExpandido((prev) => ({ ...prev, [tipo]: !prev[tipo] }))
-  }
-
-  if (grupos.length === 0) {
-    return <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>
-  }
-
-  return (
-    <div className="doc-groups">
-      {grupos.map((g) => (
-        <div key={g.tipo} className="doc-group">
-          <button className="doc-group-header" onClick={() => toggle(g.tipo)}>
-            <span className="doc-group-header-left">
-              <span
-                className="doc-group-chevron"
-                style={{ transform: expandido[g.tipo] ? 'rotate(90deg)' : 'rotate(0deg)' }}
-              >
-                ▶
-              </span>
-              <span className="doc-group-icon">{iconoTipoDocumento(g.tipo)}</span>
-              <span className="doc-group-title">{g.tipo}</span>
-            </span>
-            <span className="doc-group-badge">{g.docs.length}</span>
-          </button>
-          <div
-            className="doc-group-body"
-            style={{ gridTemplateRows: expandido[g.tipo] ? '1fr' : '0fr' }}
-          >
-            <div className="doc-group-body-inner">
-              {g.docs.map((d) => (
-                <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <div style={{ flex: 1, overflow: 'hidden' }}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                      {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
-                      {' · '}
-                      {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
-                    disabled={abriendoId === d.id}
-                    onClick={() => onVer(d)}
-                  >
-                    {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
 }
 
 function EquiposIngresadosCard({ ingresos }) {
@@ -631,6 +463,18 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
     referencia_oc: '',
     cliente_correo: '',
     cliente_telefono: '',
+    // ── Campos ampliados para seguimiento de facturación (Contabilidad) ──
+    ruc_emisor: '',
+    razon_social_emisor: '',
+    ruc_cliente: '',
+    direccion_cliente: '',
+    guia_remision: '',
+    valor_venta: '',
+    igv: '',
+    porcentaje_detraccion: '',
+    codigo_bien_servicio_detraccion: '',
+    glosa: '',
+    observaciones: '',
   })
 
   async function cargarCobranza() {
@@ -656,6 +500,17 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
         referencia_oc: data.referencia_oc || '',
         cliente_correo: data.cliente_correo || '',
         cliente_telefono: data.cliente_telefono || '',
+        ruc_emisor: data.ruc_emisor || '',
+        razon_social_emisor: data.razon_social_emisor || '',
+        ruc_cliente: data.ruc_cliente || '',
+        direccion_cliente: data.direccion_cliente || '',
+        guia_remision: data.guia_remision || '',
+        valor_venta: data.valor_venta ?? '',
+        igv: data.igv ?? '',
+        porcentaje_detraccion: data.porcentaje_detraccion ?? '',
+        codigo_bien_servicio_detraccion: data.codigo_bien_servicio_detraccion || '',
+        glosa: data.glosa || '',
+        observaciones: data.observaciones || '',
       })
     } else {
       setCobranza(null)
@@ -723,6 +578,17 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
         numero_cuenta_detraccion: datos.numero_cuenta_detraccion || prev.numero_cuenta_detraccion,
         moneda: datos.moneda || prev.moneda,
         referencia_oc: datos.referencia_oc || prev.referencia_oc,
+        ruc_emisor: datos.ruc_emisor || prev.ruc_emisor,
+        razon_social_emisor: datos.razon_social_emisor || prev.razon_social_emisor,
+        ruc_cliente: datos.ruc_cliente || prev.ruc_cliente,
+        direccion_cliente: datos.direccion_cliente || prev.direccion_cliente,
+        guia_remision: datos.guia_remision || prev.guia_remision,
+        valor_venta: datos.valor_venta ?? prev.valor_venta,
+        igv: datos.igv ?? prev.igv,
+        porcentaje_detraccion: datos.porcentaje_detraccion ?? prev.porcentaje_detraccion,
+        codigo_bien_servicio_detraccion: datos.codigo_bien_servicio_detraccion || prev.codigo_bien_servicio_detraccion,
+        glosa: datos.glosa || prev.glosa,
+        observaciones: datos.observaciones || prev.observaciones,
       }))
       setEditando(true)
     } catch (err) {
@@ -753,6 +619,18 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
       referencia_oc: form.referencia_oc.trim() || null,
       cliente_correo: form.cliente_correo.trim() || null,
       cliente_telefono: form.cliente_telefono.trim() || null,
+      // ── Campos ampliados ──
+      ruc_emisor: form.ruc_emisor.trim() || null,
+      razon_social_emisor: form.razon_social_emisor.trim() || null,
+      ruc_cliente: form.ruc_cliente.trim() || null,
+      direccion_cliente: form.direccion_cliente.trim() || null,
+      guia_remision: form.guia_remision.trim() || null,
+      valor_venta: form.valor_venta === '' ? null : Number(form.valor_venta),
+      igv: form.igv === '' ? null : Number(form.igv),
+      porcentaje_detraccion: form.porcentaje_detraccion === '' ? null : Number(form.porcentaje_detraccion),
+      codigo_bien_servicio_detraccion: form.codigo_bien_servicio_detraccion.trim() || null,
+      glosa: form.glosa.trim() || null,
+      observaciones: form.observaciones.trim() || null,
     }
 
     let error
@@ -864,13 +742,38 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
             <b>Condición:</b> {CONDICIONES_PAGO.find((c) => c.value === cobranza.condicion_pago)?.label || cobranza.condicion_pago}
             {cobranza.condicion_pago === 'personalizado' && ` (${cobranza.dias_credito} días)`}
           </div>
-          {cobranza.monto != null && (
-            <div><b>Monto factura:</b> {cobranza.moneda === 'USD' ? 'US$' : 'S/'} {Number(cobranza.monto).toFixed(2)}</div>
+
+          {(cobranza.ruc_emisor || cobranza.razon_social_emisor) && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+              <b>Emisor:</b> {cobranza.razon_social_emisor || '—'} {cobranza.ruc_emisor && `· RUC: ${cobranza.ruc_emisor}`}
+            </div>
           )}
-          {cobranza.monto_detraccion != null && (
+          {cobranza.ruc_cliente && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>RUC Cliente:</b> {cobranza.ruc_cliente}</div>
+          )}
+          {cobranza.direccion_cliente && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>Dirección:</b> {cobranza.direccion_cliente}</div>
+          )}
+          {cobranza.guia_remision && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>Guía Remisión:</b> {cobranza.guia_remision}</div>
+          )}
+
+          {cobranza.valor_venta != null && (
+            <div><b>Valor Venta:</b> {cobranza.moneda === 'USD' ? 'US$' : 'S/'} {Number(cobranza.valor_venta).toFixed(2)}</div>
+          )}
+          {cobranza.igv != null && (
+            <div><b>IGV:</b> {cobranza.moneda === 'USD' ? 'US$' : 'S/'} {Number(cobranza.igv).toFixed(2)}</div>
+          )}
+          {cobranza.monto != null && (
+            <div><b>Monto Total:</b> {cobranza.moneda === 'USD' ? 'US$' : 'S/'} {Number(cobranza.monto).toFixed(2)}</div>
+          )}
+
+          {cobranza.porcentaje_detraccion != null && (
             <div style={{ color: 'var(--text-muted)' }}>
-              <b>Detracción:</b> S/ {Number(cobranza.monto_detraccion).toFixed(2)}
+              <b>Detracción:</b> {cobranza.porcentaje_detraccion}%
+              {cobranza.monto_detraccion != null && ` — S/ ${Number(cobranza.monto_detraccion).toFixed(2)}`}
               {cobranza.numero_cuenta_detraccion && ` · Cta: ${cobranza.numero_cuenta_detraccion}`}
+              {cobranza.codigo_bien_servicio_detraccion && ` · Cód.: ${cobranza.codigo_bien_servicio_detraccion}`}
             </div>
           )}
           {montoACobrar != null && (
@@ -880,6 +783,12 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
           )}
           {cobranza.referencia_oc && (
             <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>Ref. OC/OS:</b> {cobranza.referencia_oc}</div>
+          )}
+          {cobranza.glosa && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}><b>Glosa:</b> {cobranza.glosa}</div>
+          )}
+          {cobranza.observaciones && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>{cobranza.observaciones}</div>
           )}
           {cobranza.estado === 'cobrado' && cobranza.fecha_cobro && (
             <div style={{ color: '#4ade80' }}><b>Cobrado el:</b> {cobranza.fecha_cobro}</div>
@@ -911,20 +820,38 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
             <label>N° Factura</label>
             <input value={form.numero_factura} onChange={(e) => set('numero_factura', e.target.value)} placeholder="F001-00123" />
           </div>
+
+          <div className="cobranza-subtitle">Emisor y Cliente</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label>RUC Emisor</label>
+              <input value={form.ruc_emisor} onChange={(e) => set('ruc_emisor', e.target.value)} placeholder="20605421696" />
+            </div>
+            <div>
+              <label>Razón Social Emisor</label>
+              <input value={form.razon_social_emisor} onChange={(e) => set('razon_social_emisor', e.target.value)} placeholder="Empresa emisora" />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label>RUC Cliente</label>
+              <input value={form.ruc_cliente} onChange={(e) => set('ruc_cliente', e.target.value)} placeholder="20510248261" />
+            </div>
+            <div>
+              <label>Dirección Cliente</label>
+              <input value={form.direccion_cliente} onChange={(e) => set('direccion_cliente', e.target.value)} placeholder="Dirección fiscal" />
+            </div>
+          </div>
+
+          <div className="cobranza-subtitle">Fechas y Condición</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label>Fecha de emisión</label>
               <input type="date" value={form.fecha_emision} onChange={(e) => set('fecha_emision', e.target.value)} />
             </div>
             <div>
-              <label>Monto factura</label>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <select value={form.moneda} onChange={(e) => set('moneda', e.target.value)} style={{ width: 90, flexShrink: 0 }}>
-                  <option value="PEN">S/</option>
-                  <option value="USD">US$</option>
-                </select>
-                <input type="number" step="0.01" value={form.monto} onChange={(e) => set('monto', e.target.value)} placeholder="0.00" />
-              </div>
+              <label>Guía de Remisión (opcional)</label>
+              <input value={form.guia_remision} onChange={(e) => set('guia_remision', e.target.value)} placeholder="TG01-237" />
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: esPersonalizado ? '1fr 1fr' : '1fr', gap: 10 }}>
@@ -946,18 +873,54 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
             Vencimiento calculado: <b>{sumarDias(form.fecha_emision, form.dias_credito)}</b>
           </p>
+
+          <div className="cobranza-subtitle">Montos</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 1fr 1fr', gap: 10, alignItems: 'end' }}>
+            <div>
+              <label>Moneda</label>
+              <select value={form.moneda} onChange={(e) => set('moneda', e.target.value)}>
+                <option value="PEN">S/</option>
+                <option value="USD">US$</option>
+              </select>
+            </div>
+            <div>
+              <label>Valor Venta</label>
+              <input type="number" step="0.01" value={form.valor_venta} onChange={(e) => set('valor_venta', e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label>IGV</label>
+              <input type="number" step="0.01" value={form.igv} onChange={(e) => set('igv', e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label>Monto Total</label>
+              <input type="number" step="0.01" value={form.monto} onChange={(e) => set('monto', e.target.value)} placeholder="0.00" />
+            </div>
+          </div>
+
           <div>
             <label>Referencia OC/OS (opcional)</label>
             <input value={form.referencia_oc} onChange={(e) => set('referencia_oc', e.target.value)} placeholder="P001321 / 260710109" />
           </div>
+
+          <div className="cobranza-subtitle">Detracción (si aplica)</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
-              <label>Monto detracción (S/, opcional)</label>
+              <label>Porcentaje detracción (%)</label>
+              <input type="number" step="0.01" value={form.porcentaje_detraccion} onChange={(e) => set('porcentaje_detraccion', e.target.value)} placeholder="Ej: 12" />
+            </div>
+            <div>
+              <label>Monto detracción (S/)</label>
               <input type="number" step="0.01" value={form.monto_detraccion} onChange={(e) => set('monto_detraccion', e.target.value)} placeholder="0.00" />
             </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label>Cuenta detracción (opcional)</label>
               <input value={form.numero_cuenta_detraccion} onChange={(e) => set('numero_cuenta_detraccion', e.target.value)} placeholder="00-014-XXXXXX" />
+            </div>
+            <div>
+              <label>Código bien/servicio (opcional)</label>
+              <input value={form.codigo_bien_servicio_detraccion} onChange={(e) => set('codigo_bien_servicio_detraccion', e.target.value)} placeholder="Código SUNAT" />
             </div>
           </div>
           {form.monto && form.monto_detraccion && (
@@ -965,6 +928,8 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
               Monto a cobrar: {form.moneda === 'USD' ? 'US$' : 'S/'} {(Number(form.monto) - Number(form.monto_detraccion)).toFixed(2)}
             </p>
           )}
+
+          <div className="cobranza-subtitle">Contacto y Notas</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label>Correo del cliente (para recordatorio)</label>
@@ -975,6 +940,15 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile }) {
               <input value={form.cliente_telefono} onChange={(e) => set('cliente_telefono', e.target.value)} placeholder="+51 9XX XXX XXX" />
             </div>
           </div>
+          <div>
+            <label>Glosa (descripción del servicio/bien)</label>
+            <input value={form.glosa} onChange={(e) => set('glosa', e.target.value)} placeholder="Ej: Servicio de calibración de..." />
+          </div>
+          <div>
+            <label>Observaciones</label>
+            <textarea rows={2} value={form.observaciones} onChange={(e) => set('observaciones', e.target.value)} placeholder="Notas adicionales relevantes para el pago..." style={{ resize: 'vertical' }} />
+          </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn" disabled={guardando} onClick={guardar}>
               {guardando ? 'Guardando...' : cobranza ? 'Guardar cambios' : 'Registrar factura'}
@@ -1294,7 +1268,27 @@ export default function OTDetail({ profile }) {
 
           <div className="card">
             <div className="otdetail-section-label">Documentos subidos</div>
-            <DocumentosPorTipo documentos={documentos} abriendoId={abriendoId} onVer={verDocumento} />
+            {documentos.length === 0 && <p style={{ color: 'var(--text-muted)', margin: 0 }}>Aún no hay documentos en esta área.</p>}
+            {documentos.map((d) => (
+              <div key={d.id} className="doc-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.nombre_archivo}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                    {d._subido_por_nombre ? `Subido por ${d._subido_por_nombre}` : 'Subido por —'}
+                    {' · '}
+                    {new Date(d.created_at).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '4px 12px', fontSize: 12, flexShrink: 0 }}
+                  disabled={abriendoId === d.id}
+                  onClick={() => verDocumento(d)}
+                >
+                  {abriendoId === d.id ? '⏳ Abriendo...' : '👁 Ver'}
+                </button>
+              </div>
+            ))}
           </div>
         </div>
 
