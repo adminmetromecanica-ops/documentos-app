@@ -5,6 +5,11 @@ import { supabase } from '../lib/supabaseClient'
 const THEME_KEY = 'metromecanica_theme'
 const LOGO_URL = 'https://ndcjjksaiecsuzperrhp.supabase.co/storage/v1/object/public/ot-files/logo.png'
 
+// ── Áreas con acceso a la herramienta de Seguimiento de Facturas ──────────
+// 'contabilidad' edita (marcar cobrado); 'gerencia' (que también es el área
+// de la cuenta admin@) accede en modo solo lectura. Ver SeguimientoFacturas.jsx.
+const AREAS_VEN_FACTURAS = ['contabilidad', 'gerencia']
+
 // ─── SONIDO DE SELECCIÓN — un solo AudioContext reutilizado, activado con .resume() ──
 let _audioCtx = null
 function getAudioCtx() {
@@ -349,6 +354,7 @@ export default function Portal({ profile, onLogout }) {
   })
   const navigate = useNavigate()
   const esGerencia = profile?.area === 'gerencia'
+  const veFacturas = AREAS_VEN_FACTURAS.includes(profile?.area)
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -465,6 +471,17 @@ export default function Portal({ profile, onLogout }) {
 
         {!loading && (
           <div className="tools-grid">
+            {/* ── Seguimiento de Facturas: solo Contabilidad y Gerencia ── */}
+            {veFacturas && (
+              <div
+                className="tool-card"
+                onClick={() => abrir('/facturas')}
+                onMouseEnter={playHoverSound}
+              >
+                <div className="tool-icon">🧾</div>
+                <div className="tool-name">Seguimiento de Facturas</div>
+              </div>
+            )}
             {herramientas.map((h) => (
               <div
                 key={h.id}
