@@ -971,19 +971,33 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, contactoOT, correoOT, puedeE
     }))
   }
 
+  // ── Nombre de archivo seguro para MinIO ─────────────────────────────────
+  // Los nombres con espacios (ej. "F001-2559 BRINLI SOLUCIONES S.R.L. pdf.pdf")
+  // rompen la generación del enlace firmado más adelante — otros tipos de
+  // documento (proforma, certificados) ya suben con nombres sin espacios;
+  // aquí se aplica lo mismo para las facturas.
+  function sanitizarNombreArchivo(nombre) {
+    const idx = nombre.lastIndexOf('.')
+    const base = idx > 0 ? nombre.slice(0, idx) : nombre
+    const ext = idx > 0 ? nombre.slice(idx) : ''
+    const baseSegura = base.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '')
+    return (baseSegura || 'archivo') + ext
+  }
+
   // ── Sube el archivo de factura (PDF o XML) como documento del área ──────
   // Contabilidad, en MinIO. Se usa tanto para el PDF como para el XML —
   // ambos quedan disponibles en "Documentos subidos" con su propio tipo.
   async function subirDocumentoFactura(file, tipoDocumento, subcarpeta) {
     try {
       const { data: { user } } = await supabase.auth.getUser()
+      const nombreSeguro = sanitizarNombreArchivo(file.name)
       const fd = new FormData()
-      fd.append('file', file, file.name)
+      fd.append('file', file, nombreSeguro)
       fd.append('ot_number', otNumber)
       fd.append('area', 'contabilidad')
       fd.append('tipo_documento', tipoDocumento)
       fd.append('subcarpeta', subcarpeta)
-      fd.append('nombre_archivo', file.name)
+      fd.append('nombre_archivo', nombreSeguro)
       fd.append('subido_por', user?.id || profile?.id || '')
 
       const resp = await fetch(WEBHOOK_SUBIR_DOCUMENTO, { method: 'POST', body: fd })
@@ -991,7 +1005,7 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, contactoOT, correoOT, puedeE
         console.error(`Error subiendo ${tipoDocumento} a MinIO:`, await resp.text())
         return
       }
-      registrarAuditoria(profile.id, 'subir_factura', otNumber, file.name)
+      registrarAuditoria(profile.id, 'subir_factura', otNumber, nombreSeguro)
       onDocumentoSubido && onDocumentoSubido()
     } catch (e) {
       console.error(`Error subiendo ${tipoDocumento} a MinIO:`, e)

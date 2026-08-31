@@ -230,11 +230,16 @@ const TIPOS_DOC_RECORDATORIO = ['Factura', 'Factura XML', 'Orden de Compra', 'Co
 
 async function buscarEnlacesDocumentos(otNumber) {
   try {
+    // .in() compara texto exacto — algunas áreas guardan el tipo en
+    // minúscula (ej. "proforma") y otras con mayúscula inicial (ej.
+    // "Factura"). Se usa .or() con ilike por cada tipo para que la
+    // comparación no dependa de mayúsculas/minúsculas.
+    const filtroTipos = TIPOS_DOC_RECORDATORIO.map((t) => `tipo_documento.ilike.${t}`).join(',')
     const { data: docs, error } = await supabase
       .from('documentos')
       .select('id, ruta_minio, tipo_documento, nombre_archivo, created_at')
       .eq('ot_number', otNumber)
-      .in('tipo_documento', TIPOS_DOC_RECORDATORIO)
+      .or(filtroTipos)
       .order('created_at', { ascending: false })
     if (error || !docs) return []
 
