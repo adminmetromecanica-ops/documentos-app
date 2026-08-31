@@ -365,6 +365,97 @@ const LayoutCSS = () => (
       color: var(--text-muted);
       margin: 4px 0 2px;
     }
+    /* ── Paneles de método de captura de factura (IA vs XML) ──────────── */
+    /* Antes eran dos dropzones apiladas que se confundían entre sí (una se
+       veía como continuación de la otra). Ahora son dos paneles grandes,
+       con color, ícono y borde propios — imposible soltar el archivo en el
+       panel equivocado sin notarlo. */
+    .factura-metodos-grid {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 18px;
+      align-items: stretch;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 720px) {
+      .factura-metodos-grid { grid-template-columns: 1fr; }
+      .factura-metodo-divider { flex-direction: row; height: auto; padding: 4px 0; }
+      .factura-metodo-divider::before, .factura-metodo-divider::after { width: 100%; height: 1px; }
+    }
+    .factura-metodo-divider {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+    .factura-metodo-divider::before, .factura-metodo-divider::after {
+      content: '';
+      width: 1px;
+      flex: 1;
+      background: var(--border);
+    }
+    .factura-metodo-panel {
+      border-radius: 16px;
+      padding: 22px;
+      border: 2px solid;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .factura-metodo-panel.metodo-ia {
+      border-color: rgba(45,212,191,0.45);
+      background: linear-gradient(180deg, rgba(45,212,191,0.08), rgba(45,212,191,0.02));
+    }
+    .factura-metodo-panel.metodo-xml {
+      border-color: rgba(167,139,250,0.45);
+      background: linear-gradient(180deg, rgba(167,139,250,0.08), rgba(167,139,250,0.02));
+    }
+    .factura-metodo-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .factura-metodo-icon {
+      font-size: 30px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .factura-metodo-titulo {
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--text-light, #e2e8f0);
+    }
+    .factura-metodo-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      margin-top: 3px;
+    }
+    .metodo-ia .factura-metodo-badge { background: rgba(45,212,191,0.18); color: var(--ocean-accent); }
+    .metodo-xml .factura-metodo-badge { background: rgba(167,139,250,0.18); color: #a78bfa; }
+    .factura-metodo-panel .cobranza-dropzone {
+      min-height: 130px;
+      padding: 28px 16px;
+      border-width: 2px;
+      border-radius: 12px;
+    }
+    .metodo-ia .cobranza-dropzone { border-color: rgba(45,212,191,0.5); }
+    .metodo-xml .cobranza-dropzone { border-color: rgba(167,139,250,0.5); }
+    .factura-metodo-nota {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 0;
+      line-height: 1.4;
+    }
     .doc-groups {
       display: flex;
       flex-direction: column;
@@ -1094,20 +1185,46 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, puedeEditar, profile, onDocu
       </div>
 
       {puedeEditar && (
-        <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <FacturaDropzone
-            onFile={handleArchivoPDF}
-            leyendo={leyendoPDF}
-            accept=".pdf"
-            texto={leyendoPDF ? '🤖 Leyendo factura con IA...' : '📎 Arrastra el PDF de la factura aquí, o haz clic para seleccionar'}
-          />
-          <FacturaDropzone
-            onFile={handleArchivoXML}
-            leyendo={leyendoXML}
-            compacta
-            accept=".xml"
-            texto={leyendoXML ? '📋 Leyendo XML...' : '📋 (Opcional) Arrastra también el XML SUNAT — datos exactos, sin IA'}
-          />
+        <div className="factura-metodos-grid">
+          <div className="factura-metodo-panel metodo-ia">
+            <div className="factura-metodo-header">
+              <span className="factura-metodo-icon">🤖</span>
+              <div>
+                <div className="factura-metodo-titulo">Leer con IA</div>
+                <span className="factura-metodo-badge">Desde el PDF</span>
+              </div>
+            </div>
+            <FacturaDropzone
+              onFile={handleArchivoPDF}
+              leyendo={leyendoPDF}
+              accept=".pdf"
+              texto={leyendoPDF ? '🤖 Leyendo factura con IA...' : '📎 Arrastra el PDF aquí, o haz clic para seleccionar'}
+            />
+            <p className="factura-metodo-nota">
+              Sube el PDF de la factura tal como lo descargas. La IA lee la imagen y completa el formulario. Este documento queda guardado como "Factura".
+            </p>
+          </div>
+
+          <div className="factura-metodo-divider">O</div>
+
+          <div className="factura-metodo-panel metodo-xml">
+            <div className="factura-metodo-header">
+              <span className="factura-metodo-icon">📋</span>
+              <div>
+                <div className="factura-metodo-titulo">XML SUNAT</div>
+                <span className="factura-metodo-badge">Sin IA · Exacto</span>
+              </div>
+            </div>
+            <FacturaDropzone
+              onFile={handleArchivoXML}
+              leyendo={leyendoXML}
+              accept=".xml"
+              texto={leyendoXML ? '📋 Leyendo XML...' : '📎 Arrastra el XML aquí, o haz clic para seleccionar'}
+            />
+            <p className="factura-metodo-nota">
+              Si tu plataforma de facturación te da el XML, úsalo aquí: los datos salen directo de los campos oficiales, sin usar IA ni costo. Se guarda como "Factura XML".
+            </p>
+          </div>
         </div>
       )}
 
