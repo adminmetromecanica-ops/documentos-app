@@ -8,6 +8,7 @@ import Portal from './pages/Portal'
 import AdminHerramientas from './pages/AdminHerramientas'
 import Buscador from './pages/Buscador'
 import SeguimientoFacturas from './pages/SeguimientoFacturas'
+import SeguimientoCertificados from './pages/SeguimientoCertificados'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="/admin/herramientas" element={<AdminHerramientas profile={profile} onLogout={handleLogout} />} />
         <Route path="/buscar" element={<Buscador profile={profile} onLogout={handleLogout} />} />
         <Route path="/facturas" element={<SeguimientoFacturas profile={profile} onLogout={handleLogout} />} />
+        <Route path="/certificados" element={<SeguimientoCertificados profile={profile} onLogout={handleLogout} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>
