@@ -30,12 +30,17 @@ function extraerTelefonoDeContacto(contactoTexto) {
   return match[1].replace(/[\s-]/g, '')
 }
 
-// Compositor web de Gmail — sin parámetro de cuenta fija, ya que este panel
-// hoy es de uso interno/admin sin un correo dedicado de Calidad todavía.
-// Si más adelante quieren un remitente fijo (como contabilidad@ para
-// facturas), se agrega igual que allá con un solo parámetro authuser.
+// ── Cuenta desde la que Laboratorio envía los recordatorios ──────────────
+const CORREO_REMITENTE_LABORATORIO = 'laboratorio@metromecanica.com.pe'
+
+// Compositor web de Gmail — con parámetro authuser fijo, igual que en
+// Seguimiento de Facturas (contabilidad@): si esa cuenta está logueada en
+// el navegador, el compositor se abre directo desde ahí.
 function construirLinkCorreo(destinatario, asunto, cuerpo) {
-  const params = new URLSearchParams({ view: 'cm', fs: '1', to: destinatario, su: asunto, body: cuerpo })
+  const params = new URLSearchParams({
+    view: 'cm', fs: '1', to: destinatario, su: asunto, body: cuerpo,
+    authuser: CORREO_REMITENTE_LABORATORIO,
+  })
   return `https://mail.google.com/mail/?${params.toString()}`
 }
 
@@ -184,7 +189,7 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
 
         <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${CORREO_REMITENTE_LABORATORIO}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
             📧 Abrir en Gmail para enviar
           </a>
         </div>
