@@ -9,8 +9,13 @@ import AdminHerramientas from './pages/AdminHerramientas'
 import Buscador from './pages/Buscador'
 import SeguimientoFacturas from './pages/SeguimientoFacturas'
 import SeguimientoCertificados from './pages/SeguimientoCertificados'
+import CompartirDocumentosOT from './pages/CompartirDocumentosOT'
 
-export default function App() {
+// ── Zona protegida — todo lo que antes vivía directo en App() ────────────
+// Se separó en su propio componente para que la ruta pública
+// "/compartir/:otNumber" (usada por clientes externos, sin cuenta) pueda
+// montarse ANTES de este gate, sin pasar por login, 2FA, ni perfil.
+function ZonaProtegida() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -80,16 +85,31 @@ export default function App() {
   if (!profile.area) return <div className="container">Tu cuenta no tiene un área asignada. Contacta al administrador.</div>
 
   return (
+    <Routes>
+      <Route path="/" element={<Portal profile={profile} onLogout={handleLogout} />} />
+      <Route path="/ots" element={<Dashboard profile={profile} onLogout={handleLogout} />} />
+      <Route path="/ot/:otNumber" element={<OTDetail profile={profile} />} />
+      <Route path="/admin/herramientas" element={<AdminHerramientas profile={profile} onLogout={handleLogout} />} />
+      <Route path="/buscar" element={<Buscador profile={profile} onLogout={handleLogout} />} />
+      <Route path="/facturas" element={<SeguimientoFacturas profile={profile} onLogout={handleLogout} />} />
+      <Route path="/certificados" element={<SeguimientoCertificados profile={profile} onLogout={handleLogout} />} />
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
+  )
+}
+
+export default function App() {
+  return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Portal profile={profile} onLogout={handleLogout} />} />
-        <Route path="/ots" element={<Dashboard profile={profile} onLogout={handleLogout} />} />
-        <Route path="/ot/:otNumber" element={<OTDetail profile={profile} />} />
-        <Route path="/admin/herramientas" element={<AdminHerramientas profile={profile} onLogout={handleLogout} />} />
-        <Route path="/buscar" element={<Buscador profile={profile} onLogout={handleLogout} />} />
-        <Route path="/facturas" element={<SeguimientoFacturas profile={profile} onLogout={handleLogout} />} />
-        <Route path="/certificados" element={<SeguimientoCertificados profile={profile} onLogout={handleLogout} />} />
-        <Route path="*" element={<Navigate to="/" />} />
+        {/* ── Ruta pública — sin login, sin 2FA, sin perfil ──────────────
+            Usada por clientes externos desde el enlace que les llega por
+            correo/WhatsApp. Valida su propio token internamente (ver
+            CompartirDocumentosOT.jsx), no depende de sesión de Supabase. */}
+        <Route path="/compartir/:otNumber" element={<CompartirDocumentosOT />} />
+
+        {/* Todo lo demás pasa por el gate de autenticación normal */}
+        <Route path="/*" element={<ZonaProtegida />} />
       </Routes>
     </BrowserRouter>
   )
