@@ -9,6 +9,9 @@ const LOGO_URL = 'https://ndcjjksaiecsuzperrhp.supabase.co/storage/v1/object/pub
 // 'contabilidad' edita (marcar cobrado); 'gerencia' (que también es el área
 // de la cuenta admin@) accede en modo solo lectura. Ver SeguimientoFacturas.jsx.
 const AREAS_VEN_FACTURAS = ['contabilidad', 'gerencia']
+// Por ahora, solo Gerencia/admin@ — cuando exista un área de Calidad
+// separada, se agrega aquí sin tocar nada más.
+const AREAS_VEN_CERTIFICADOS = ['gerencia']
 
 // ─── SONIDO DE SELECCIÓN — un solo AudioContext reutilizado, activado con .resume() ──
 let _audioCtx = null
@@ -355,6 +358,7 @@ export default function Portal({ profile, onLogout }) {
   const navigate = useNavigate()
   const esGerencia = profile?.area === 'gerencia'
   const veFacturas = AREAS_VEN_FACTURAS.includes(profile?.area)
+  const veCertificados = AREAS_VEN_CERTIFICADOS.includes(profile?.area)
   const esContabilidad = profile?.area === 'contabilidad'
 
   const [avisoFacturas, setAvisoFacturas] = useState(null)
@@ -555,6 +559,17 @@ export default function Portal({ profile, onLogout }) {
               >
                 <div className="tool-icon">🧾</div>
                 <div className="tool-name">Seguimiento de Facturas</div>
+              </div>
+            )}
+            {/* ── Certificados y Trazabilidades: solo Gerencia/admin por ahora ── */}
+            {veCertificados && (
+              <div
+                className="tool-card"
+                onClick={() => abrir('/certificados')}
+                onMouseEnter={playHoverSound}
+              >
+                <div className="tool-icon">🔬</div>
+                <div className="tool-name">Certificados y Trazabilidades</div>
               </div>
             )}
             {herramientas.map((h) => (
