@@ -80,19 +80,39 @@ function calcularEstado(equipos, certificados, trazabilidades) {
   return 'parcial'
 }
 
-function armarMensajeRecordatorio(ot, cliente, equipos, certificados, trazabilidades) {
+// ── Mensaje del correo — versión completa ─────────────────────────────
+// Incluye el detalle de cada equipo (no solo el conteo) y cambia el cierre
+// según si ya está todo listo o si aún falta algo, para que el mensaje
+// tenga sentido en ambos casos sin sonar genérico.
+function armarMensajeRecordatorio(fila) {
+  const { ot_number, client, due_date, equipos, certificados, trazabilidades, ingresos } = fila
+  const completo = equipos > 0 && certificados >= equipos && trazabilidades >= equipos
+
+  const listaEquipos = (Array.isArray(ingresos) ? ingresos : [])
+    .map((eq, i) => `${i + 1}. ${eq.descripcion || 'Equipo sin descripción'}${eq.marca ? ` — ${eq.marca}` : ''}${eq.modelo ? ` ${eq.modelo}` : ''}`)
+    .join('\n')
+
+  const parrafoCierre = completo
+    ? 'Todos los certificados y registros de trazabilidad de esta orden ya están disponibles — puede descargarlos desde los enlaces a continuación.'
+    : 'Nuestro equipo técnico se encuentra finalizando los documentos pendientes de esta orden y se los haremos llegar a la brevedad. Le compartimos igualmente los que ya están disponibles a la fecha.'
+
   return [
-    `Estimados ${cliente || 'señores'},`,
+    `Estimados ${client || 'señores'},`,
     '',
-    `Por medio del presente, MetroMecánica Ingeniería y Metrología S.A.C. les informa el estado de los certificados de calibración de la orden de trabajo ${ot}:`,
+    `El Laboratorio de Calibración de MetroMecánica Ingeniería y Metrología S.A.C. le informa el estado de los certificados de calibración correspondientes a la orden de trabajo ${ot_number}${due_date ? ` (fecha de entrega: ${fmtFecha(due_date)})` : ''}.`,
     '',
+    'Resumen:',
     `• Equipos ingresados: ${equipos}`,
-    `• Certificados emitidos: ${certificados} de ${equipos}`,
-    `• Trazabilidades emitidas: ${trazabilidades} de ${equipos}`,
+    `• Certificados de calibración emitidos: ${certificados} de ${equipos}`,
+    `• Registros de trazabilidad emitidos: ${trazabilidades} de ${equipos}`,
     '',
-    'Adjuntamos los enlaces de los documentos disponibles a la fecha.',
+    ...(listaEquipos ? ['Equipos incluidos en esta orden:', listaEquipos, ''] : []),
+    parrafoCierre,
+    '',
+    'Ante cualquier consulta sobre el detalle técnico de los certificados, no dude en escribirnos.',
     '',
     'Saludos cordiales,',
+    'Laboratorio de Calibración',
     'MetroMecánica Ingeniería y Metrología S.A.C.',
     'RUC: 20605421696',
   ].join('\n')
@@ -142,7 +162,7 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
         style={{ width: '100%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
       >
         <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong style={{ fontSize: 16 }}>🔬 Certificados — OT {ot.ot_number}</strong>
+          <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
           <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
         </div>
 
@@ -194,6 +214,68 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
           </a>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Fondo del toro — imagen real con movimiento sutil ────────────────────
+// Reemplaza el fondo marino de burbujas por la imagen que subiste a
+// Supabase Storage. Se mantiene claro (fondo base blanco/hueso detrás) y la
+// foto se atenúa bastante (opacidad baja) para que compita lo menos
+// posible con el texto — la imagen es muy oscura y dramática por sí sola.
+// Movimiento: "respiración" lenta (zoom sutil) + parallax al mover el
+// mouse, mismo mecanismo que en Facturas y en el fondo marino anterior.
+const URL_IMAGEN_TORO = 'https://ndcjjksaiecsuzperrhp.supabase.co/storage/v1/object/public/ot-files/toro_fondo.png'
+
+function FondoToroAnimado() {
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+
+  useEffect(() => {
+    function onMove(e) {
+      setOffset({
+        x: (e.clientX / window.innerWidth - 0.5) * 2,
+        y: (e.clientY / window.innerHeight - 0.5) * 2,
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: -1, overflow: 'hidden', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(160deg, #f6f4ee 0%, #f0ede4 55%, #e9e4d8 100%)' }} />
+      <div
+        style={{
+          position: 'absolute',
+          right: '-8%',
+          bottom: '-6%',
+          width: 'min(65%, 820px)',
+          transform: `translate(${offset.x * 14}px, ${offset.y * 14}px)`,
+          transition: 'transform 0.4s ease-out',
+        }}
+      >
+        <img
+          src={URL_IMAGEN_TORO}
+          alt=""
+          style={{
+            width: '100%',
+            height: 'auto',
+            display: 'block',
+            opacity: 0.16,
+            filter: 'grayscale(0.25) contrast(0.9) brightness(1.05)',
+            animation: 'respiroToro 13s ease-in-out infinite',
+          }}
+        />
+      </div>
+      <style>{`
+        @keyframes respiroToro {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.035); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .certificados-tema-marino [style*="animation"] { animation: none !important; }
+        }
+      `}</style>
     </div>
   )
 }
@@ -284,8 +366,10 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
         return (f.ot_number || '').toLowerCase().includes(q) || (f.client || '').toLowerCase().includes(q)
       })
       .sort((a, b) => {
-        const orden = { sin_documentos: 0, parcial: 1, completo: 2, sin_equipos: 3 }
-        return orden[a.estado] - orden[b.estado]
+        if (!a.due_date && !b.due_date) return 0
+        if (!a.due_date) return 1
+        if (!b.due_date) return -1
+        return new Date(a.due_date) - new Date(b.due_date)
       })
   }, [filas, tab, busqueda])
 
@@ -295,7 +379,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       alert('Esta OT no tiene un correo de contacto registrado en MetroTrack (pestaña Datos).')
       return
     }
-    const mensaje = armarMensajeRecordatorio(fila.ot_number, fila.client, fila.equipos, fila.certificados, fila.trazabilidades)
+    const mensaje = armarMensajeRecordatorio(fila)
     setModalRecordatorio({
       ot: fila,
       correo,
@@ -318,7 +402,63 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
   }
 
   return (
-    <div className="container container-ancho" style={{ maxWidth: 1500, margin: '0 auto' }}>
+    <div className="container container-ancho certificados-tema-marino" style={{ maxWidth: 1500, margin: '0 auto', position: 'relative', minHeight: '100vh' }}>
+      <style>{`
+        .certificados-tema-marino {
+          --ocean-accent: #1f7a8c;
+          --border: #b9dde8;
+          --text: #16232b;
+          --text-muted: #4a6470;
+          --danger: #c65b3a;
+        }
+        .certificados-tema-marino .card {
+          border-radius: 16px;
+          border-color: rgba(31, 122, 140, 0.28);
+          background: rgba(240, 251, 253, 0.85);
+          backdrop-filter: blur(2px);
+          color: #16232b;
+        }
+        .certificados-tema-marino input {
+          background: rgba(255, 253, 250, 0.92);
+          color: #16232b;
+          border-color: rgba(31, 122, 140, 0.3);
+        }
+        .certificados-tema-marino .btn {
+          background: #1f7a8c;
+          color: #f0fbfd;
+          border-radius: 10px;
+          border: none;
+        }
+        .certificados-tema-marino .btn-secondary {
+          border-radius: 10px;
+          border-color: rgba(31, 122, 140, 0.35);
+          background: rgba(31, 122, 140, 0.08);
+          color: #163542;
+        }
+        .certificados-tema-marino h1,
+        .certificados-tema-marino h2,
+        .certificados-tema-marino h3,
+        .certificados-tema-marino h4,
+        .certificados-tema-marino strong {
+          color: #101c22 !important;
+        }
+        .certificados-tema-marino p,
+        .certificados-tema-marino label,
+        .certificados-tema-marino th {
+          color: #375160 !important;
+        }
+        .certificados-tema-marino .link-back {
+          color: #1a6b7a !important;
+          font-weight: 700;
+        }
+        .certificados-tema-marino td {
+          color: #16232b;
+        }
+        .certificados-tema-marino a {
+          color: #1a6b7a;
+        }
+      `}</style>
+      <FondoToroAnimado />
       <div className="top-bar" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al panel</a>
@@ -368,8 +508,8 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
-                  {['OT', 'Cliente', 'Equipos', 'Certificados', 'Trazabilidades', 'Estado', 'Recordar'].map((h) => (
-                    <th key={h} style={{ position: 'sticky', top: 0, background: 'var(--panel-bg, #0f172a)', padding: '10px', textAlign: 'left', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' }}>
+                  {['OT', 'Fecha', 'Cliente', 'Equipos', 'Certificados', 'Trazabilidades', 'Estado', 'Enviar'].map((h) => (
+                    <th key={h} style={{ position: 'sticky', top: 0, background: 'rgba(240, 251, 253, 0.97)', padding: '10px', textAlign: 'left', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' }}>
                       {h}
                     </th>
                   ))}
@@ -381,6 +521,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                       <a onClick={() => navigate(`/ot/${f.ot_number}`)} style={{ cursor: 'pointer', color: 'var(--ocean-accent)' }}>{f.ot_number}</a>
                     </td>
+                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(f.due_date)}</td>
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.client || '—'}</td>
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>{f.equipos}</td>
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', fontWeight: 700, color: f.certificados >= f.equipos ? '#4c8a63' : '#c65b3a' }}>
@@ -393,7 +534,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                       {puedeEditar && (
                         <button className="btn btn-secondary" style={{ fontSize: 12, padding: '5px 10px' }} onClick={() => abrirRecordatorio(f)}>
-                          📧 Recordar
+                          📧 Enviar
                         </button>
                       )}
                     </td>
