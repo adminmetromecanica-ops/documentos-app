@@ -544,22 +544,44 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   const [guardandoId, setGuardandoId] = useState(null)
   const [modalCorreo, setModalCorreo] = useState(null)
 
+  // ── Anexa los enlaces de documentos al propio texto del mensaje ────────
+  // Antes los enlaces solo se mostraban como botones dentro del modal (para
+  // revisar), pero nunca viajaban en el correo real — por eso el
+  // destinatario no los veía. Ahora se agregan al final del mensaje mismo
+  // (lo que se edita, se copia y se manda a Gmail). quitarSeccionDocumentos
+  // evita duplicar la sección si se reintenta la búsqueda más de una vez.
+  function quitarSeccionDocumentos(texto) {
+    const idx = texto.indexOf('\n\nDocumentos:')
+    return idx === -1 ? texto : texto.slice(0, idx)
+  }
+
+  function anexarEnlacesAlMensaje(mensajeActual, docs) {
+    const base = quitarSeccionDocumentos(mensajeActual)
+    const lineasDocs = docs.filter((d) => d.url).map((d) => `${d.tipo}: ${d.url}`)
+    return lineasDocs.length > 0 ? `${base}\n\nDocumentos:\n${lineasDocs.join('\n')}` : base
+  }
+
   // Abre el modal de inmediato con el mensaje ya armado, y busca los
   // documentos (factura / OC / proforma) en paralelo — no bloquea la
   // apertura del modal esperando la búsqueda.
   function abrirModalCorreo(c, cliente, correo, mensaje) {
     setModalCorreo({ c, correo, mensaje, cargandoDocs: true, documentos: null })
     buscarEnlacesDocumentos(c.ot_number).then((docs) => {
-      setModalCorreo((prev) => (prev && prev.c.id === c.id ? { ...prev, cargandoDocs: false, documentos: docs } : prev))
+      setModalCorreo((prev) => (prev && prev.c.id === c.id
+        ? { ...prev, cargandoDocs: false, documentos: docs, mensaje: anexarEnlacesAlMensaje(prev.mensaje, docs) }
+        : prev))
     })
   }
 
-  // Reintenta solo la parte de documentos (sin tocar el mensaje ya editado).
+  // Reintenta solo la parte de documentos (sin perder ediciones manuales
+  // al texto base del mensaje, solo se reemplaza la sección "Documentos:").
   function reintentarDocsModal() {
     setModalCorreo((prev) => {
       if (!prev) return prev
       buscarEnlacesDocumentos(prev.c.ot_number).then((docs) => {
-        setModalCorreo((actual) => (actual && actual.c.id === prev.c.id ? { ...actual, cargandoDocs: false, documentos: docs } : actual))
+        setModalCorreo((actual) => (actual && actual.c.id === prev.c.id
+          ? { ...actual, cargandoDocs: false, documentos: docs, mensaje: anexarEnlacesAlMensaje(actual.mensaje, docs) }
+          : actual))
       })
       return { ...prev, cargandoDocs: true }
     })
