@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
@@ -528,6 +528,17 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
   const [clientesPorOT, setClientesPorOT] = useState({})
   const [loading, setLoading] = useState(true)
   const [mes, setMes] = useState(mesActualValue())
+  const seAjustoMesInicial = useRef(false)
+
+  // ── Navegación de mes con flechas — más fácil de acertar con el dedo o
+  // el mouse que el selector nativo, útil para baja visión.
+  function cambiarMes(delta) {
+    setMes((prev) => {
+      const [anio, mesNum] = prev.split('-').map(Number)
+      const d = new Date(anio, (mesNum - 1) + delta, 1)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    })
+  }
   const [filtroEstado, setFiltroEstado] = useState('todas') // todas | vencido | por_vencer | pendiente | cobrado
   const [busqueda, setBusqueda] = useState('')
   const [guardandoId, setGuardandoId] = useState(null)
@@ -576,6 +587,24 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
     const mapa = {}
     for (const s of svcs) mapa[s.ot_number] = s
     setClientesPorOT(mapa)
+
+    // ── Si el mes actual (calendario real) no tiene ninguna factura
+    // emitida, se ajusta el selector al mes de la factura más reciente —
+    // así "Resumen del mes" no aparece en ceros la primera vez que se
+    // abre la herramienta solo porque hoy cae en un mes sin movimiento.
+    // Solo se hace una vez al cargar; si el usuario ya eligió un mes a
+    // mano, no se le pisa la selección.
+    if (!seAjustoMesInicial.current && filas.length > 0) {
+      seAjustoMesInicial.current = true
+      const mesActual = mesActualValue()
+      const tieneEsteMes = filas.some((c) => c.fecha_emision && c.fecha_emision.slice(0, 7) === mesActual)
+      if (!tieneEsteMes) {
+        const masReciente = [...filas]
+          .filter((c) => c.fecha_emision)
+          .sort((a, b) => new Date(b.fecha_emision) - new Date(a.fecha_emision))[0]
+        if (masReciente) setMes(masReciente.fecha_emision.slice(0, 7))
+      }
+    }
 
     setLoading(false)
   }
@@ -953,10 +982,46 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
 
           {/* ── KPIs del mes seleccionado ── */}
           <div className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: 12 }}>
               <div className="otdetail-section-label" style={{ margin: 0 }}>Resumen del mes</div>
-              <input type="month" value={mes} onChange={(e) => setMes(e.target.value)} style={{ width: 185, minWidth: 185, flexShrink: 0 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={() => cambiarMes(-1)}
+                  title="Mes anterior"
+                  style={{
+                    fontSize: 22, fontWeight: 900, padding: '8px 16px', borderRadius: 10,
+                    border: '3px solid var(--ocean-accent)', background: 'transparent',
+                    color: 'var(--ocean-accent)', cursor: 'pointer', lineHeight: 1,
+                  }}
+                >
+                  ‹
+                </button>
+                <input
+                  type="month"
+                  value={mes}
+                  onChange={(e) => setMes(e.target.value)}
+                  style={{
+                    fontSize: 20, fontWeight: 800, padding: '10px 14px', width: 220, minWidth: 220,
+                    flexShrink: 0, textAlign: 'center', borderRadius: 10,
+                    border: '3px solid var(--ocean-accent)', color: '#241d13',
+                  }}
+                />
+                <button
+                  onClick={() => cambiarMes(1)}
+                  title="Mes siguiente"
+                  style={{
+                    fontSize: 22, fontWeight: 900, padding: '8px 16px', borderRadius: 10,
+                    border: '3px solid var(--ocean-accent)', background: 'transparent',
+                    color: 'var(--ocean-accent)', cursor: 'pointer', lineHeight: 1,
+                  }}
+                >
+                  ›
+                </button>
+              </div>
             </div>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+              Facturado, IGV y Detracción se calculan por fecha de <b>emisión</b> · Cobrado se calcula por fecha de <b>cobro</b> — pueden caer en meses distintos.
+            </p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <KpiCard compacta label="Facturas emitidas" value={kpisMes.cantidadEmitidas} />
               <KpiCard compacta label="Facturado" value={fmtMoneda(kpisMes.facturadoMes, 'PEN')} />
