@@ -66,11 +66,14 @@ function contarEquipos(ingresos) {
 }
 
 // ── Semáforo de completitud (Certificado + Trazabilidad vs. equipos) ────
+// Antes "Parcial" y "Sin docs" eran dos tonos café/naranja muy parecidos —
+// ahora usan matices claramente distintos (ámbar dorado vs. rojo intenso)
+// para que se distingan de un vistazo, no solo por el texto.
 const ESTADO_CFG = {
-  completo: { color: '#4c8a63', titulo: 'Certificados y trazabilidades completos', texto: 'COMPLETO' },
-  parcial: { color: '#a97a2e', titulo: 'Faltan certificados o trazabilidades de algunos equipos', texto: 'PARCIAL' },
-  sin_documentos: { color: '#c65b3a', titulo: 'Sin certificados ni trazabilidades subidas', texto: 'SIN DOCS' },
-  sin_equipos: { color: '#7a6f5d', titulo: 'Esta OT no tiene equipos registrados en Ingresos', texto: 'SIN EQUIPOS' },
+  completo: { color: '#2f8f5b', titulo: 'Certificados y trazabilidades completos', texto: 'COMPLETO' },
+  parcial: { color: '#d9a418', titulo: 'Faltan certificados o trazabilidades de algunos equipos', texto: 'PARCIAL' },
+  sin_documentos: { color: '#c0392b', titulo: 'Sin certificados ni trazabilidades subidas', texto: 'SIN DOCS' },
+  sin_equipos: { color: '#6b7280', titulo: 'Esta OT no tiene equipos registrados en Ingresos', texto: 'SIN EQUIPOS' },
 }
 
 function calcularEstado(equipos, certificados, trazabilidades) {
@@ -135,7 +138,10 @@ function Badge({ estado }) {
   return (
     <span
       title={cfg.titulo}
-      style={{ fontSize: 11, fontWeight: 700, color: cfg.color, background: `${cfg.color}22`, borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap' }}
+      style={{
+        fontSize: 11, fontWeight: 800, color: cfg.color, background: `${cfg.color}20`,
+        border: `1px solid ${cfg.color}55`, borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap',
+      }}
     >
       {cfg.texto}
     </span>
@@ -287,7 +293,20 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('seguimiento') // 'seguimiento' | 'sin_documentos'
   const [busqueda, setBusqueda] = useState('')
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
   const [modalRecordatorio, setModalRecordatorio] = useState(null)
+
+  // Atajo: elegir un mes completo rellena "Desde"/"Hasta" automáticamente
+  // con el primer y último día de ese mes — sin perder la opción de un
+  // rango de fechas manual y más específico si se necesita.
+  function aplicarMesRapido(valorMes) {
+    if (!valorMes) { setFechaDesde(''); setFechaHasta(''); return }
+    const [anio, mes] = valorMes.split('-').map(Number)
+    const ultimoDia = new Date(anio, mes, 0).getDate()
+    setFechaDesde(`${valorMes}-01`)
+    setFechaHasta(`${valorMes}-${String(ultimoDia).padStart(2, '0')}`)
+  }
 
   const acceso = AREAS_PERMITIDAS.includes(profile?.area)
   const puedeEditar = AREAS_EDITAN.includes(profile?.area)
@@ -365,13 +384,20 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
         const q = busqueda.trim().toLowerCase()
         return (f.ot_number || '').toLowerCase().includes(q) || (f.client || '').toLowerCase().includes(q)
       })
+      .filter((f) => {
+        if (!fechaDesde && !fechaHasta) return true
+        if (!f.due_date) return false
+        if (fechaDesde && f.due_date < fechaDesde) return false
+        if (fechaHasta && f.due_date > fechaHasta) return false
+        return true
+      })
       .sort((a, b) => {
         if (!a.due_date && !b.due_date) return 0
         if (!a.due_date) return 1
         if (!b.due_date) return -1
         return new Date(a.due_date) - new Date(b.due_date)
       })
-  }, [filas, tab, busqueda])
+  }, [filas, tab, busqueda, fechaDesde, fechaHasta])
 
   async function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
@@ -491,12 +517,34 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
         </button>
       </div>
 
-      <input
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-        placeholder="Buscar por OT o cliente..."
-        style={{ maxWidth: 320, marginBottom: 14 }}
-      />
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 14 }}>
+        <div>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Buscar</label>
+          <input
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por OT o cliente..."
+            style={{ width: 260 }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Mes rápido</label>
+          <input type="month" onChange={(e) => aplicarMesRapido(e.target.value)} style={{ width: 170 }} />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Desde</label>
+          <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} style={{ width: 155 }} />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Hasta</label>
+          <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} style={{ width: 155 }} />
+        </div>
+        {(fechaDesde || fechaHasta) && (
+          <button className="btn btn-secondary" onClick={() => { setFechaDesde(''); setFechaHasta('') }}>
+            ✕ Limpiar fechas
+          </button>
+        )}
+      </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {loading ? (
