@@ -87,17 +87,34 @@ function calcularEstado(equipos, certificados, trazabilidades) {
 // Incluye el detalle de cada equipo (no solo el conteo) y cambia el cierre
 // según si ya está todo listo o si aún falta algo, para que el mensaje
 // tenga sentido en ambos casos sin sonar genérico.
+// ── Valores placeholder que no deben mostrarse al cliente tal cual ───────
+// Cuando el técnico no especifica marca/modelo, el sistema de Ingresos
+// guarda literalmente "NO INDICA" — mostrarlo en un correo se ve poco
+// profesional, así que se omite en vez de imprimirlo.
+const VALORES_SIN_DATO = ['no indica', 'no especifica', 's/n', 'sin serie', 'n/a', '']
+
+function tieneValorReal(valor) {
+  return valor && !VALORES_SIN_DATO.includes(valor.trim().toLowerCase())
+}
+
 function armarMensajeRecordatorio(fila) {
   const { ot_number, client, due_date, equipos, certificados, trazabilidades, ingresos } = fila
   const completo = equipos > 0 && certificados >= equipos && trazabilidades >= equipos
 
   const listaEquipos = (Array.isArray(ingresos) ? ingresos : [])
-    .map((eq, i) => `${i + 1}. ${eq.descripcion || 'Equipo sin descripción'}${eq.marca ? ` — ${eq.marca}` : ''}${eq.modelo ? ` ${eq.modelo}` : ''}`)
+    .map((eq, i) => {
+      const detalles = [
+        tieneValorReal(eq.marca) ? eq.marca.trim() : null,
+        tieneValorReal(eq.modelo) ? eq.modelo.trim() : null,
+      ].filter(Boolean).join(' ')
+      const descripcion = eq.descripcion || 'Equipo sin descripción'
+      return detalles ? `${i + 1}. ${descripcion} — ${detalles}` : `${i + 1}. ${descripcion}`
+    })
     .join('\n')
 
   const parrafoCierre = completo
-    ? 'Todos los certificados y registros de trazabilidad de esta orden ya están disponibles — puede descargarlos desde los enlaces a continuación.'
-    : 'Nuestro equipo técnico se encuentra finalizando los documentos pendientes de esta orden y se los haremos llegar a la brevedad. Le compartimos igualmente los que ya están disponibles a la fecha.'
+    ? 'Todos los certificados y registros de trazabilidad de esta orden ya están disponibles — puede descargarlos desde los enlaces al final de este correo.'
+    : 'Nuestro equipo técnico se encuentra finalizando los documentos pendientes de esta orden y se los haremos llegar a la brevedad. Le compartimos igualmente los que ya están disponibles a la fecha, al final de este correo.'
 
   return [
     `Estimados ${client || 'señores'},`,
@@ -399,22 +416,26 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       })
   }, [filas, tab, busqueda, fechaDesde, fechaHasta])
 
+  // ── Anexa los enlaces de documentos al propio texto del mensaje ────────
+  // Mismo bug (y mismo arreglo) que tuvimos en Seguimiento de Facturas: los
+  // documentos se mostraban como botones en el modal pero nunca viajaban
+  // en el correo real. Ahora se agregan al final del mensaje mismo (lo que
+  // se edita, se copia y se manda a Gmail).
   async function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
       alert('Esta OT no tiene un correo de contacto registrado en MetroTrack (pestaña Datos).')
       return
     }
-    const mensaje = armarMensajeRecordatorio(fila)
-    setModalRecordatorio({
-      ot: fila,
-      correo,
-      mensaje,
-      cargandoDocs: false,
-      documentos: [...fila.docsCertificados, ...fila.docsTrazabilidades].map((d) => ({
-        id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
-      })),
-    })
+    const mensajeBase = armarMensajeRecordatorio(fila)
+    const documentos = [...fila.docsCertificados, ...fila.docsTrazabilidades].map((d) => ({
+      id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
+    }))
+    const lineasDocs = documentos.map((d) => `${d.tipo}: ${d.url}`)
+    const mensaje = lineasDocs.length > 0
+      ? `${mensajeBase}\n\nDocumentos:\n${lineasDocs.join('\n')}`
+      : mensajeBase
+    setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos })
   }
 
   if (!acceso) {
