@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Component } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 
 // ── Página pública — SIN login ──────────────────────────────────────────
@@ -78,7 +78,30 @@ function CarpetaDocumentos({ tipo, docs }) {
   )
 }
 
-export default function CompartirDocumentosOT() {
+// ── Red de seguridad — si algo explota, muestra un mensaje en vez de
+// dejar la pantalla en blanco (crítico en una página que ve un cliente
+// externo, sin nadie de MetroMecánica para avisar que algo se rompió).
+class ErrorBoundaryCompartir extends Component {
+  constructor(props) { super(props); this.state = { hayError: false } }
+  static getDerivedStateFromError() { return { hayError: true } }
+  componentDidCatch(error, info) { console.error('Error en página pública de documentos:', error, info) }
+  render() {
+    if (this.state.hayError) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4f6f8', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: 28, textAlign: 'center', border: '1px solid #e2e8f0', maxWidth: 420 }}>
+            <div style={{ fontSize: 30, marginBottom: 10 }}>⚠</div>
+            <div style={{ fontWeight: 700, color: '#16232b', marginBottom: 6 }}>Ocurrió un problema al mostrar esta página</div>
+            <p style={{ color: '#5c6d7a', fontSize: 14, margin: 0 }}>Por favor, contacte a MetroMecánica para obtener sus documentos.</p>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+function CompartirDocumentosOTInterno() {
   const { otNumber } = useParams()
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') || ''
@@ -97,13 +120,12 @@ export default function CompartirDocumentosOT() {
           setEstado('sin_acceso')
           return
         }
-        const data = await resp.json()
-        if (!Array.isArray(data) || data.length === 0) {
-          setEstado(data === null || data.length === 0 ? 'ok' : 'sin_acceso')
-          setDocumentos(data || [])
-          return
-        }
-        setDocumentos(data)
+        // Sin importar qué devuelva exactamente n8n (array, objeto vacío,
+        // null, etc.), "documentos" siempre queda como un array real —
+        // así el resto del componente nunca puede explotar al iterarlo.
+        const data = await resp.json().catch(() => null)
+        const lista = Array.isArray(data) ? data : []
+        setDocumentos(lista)
         setEstado('ok')
       } catch (e) {
         console.error('Error cargando documentos compartidos:', e)
@@ -115,7 +137,7 @@ export default function CompartirDocumentosOT() {
 
   const grupos = {}
   for (const d of documentos) {
-    const key = (d.tipo_documento || 'otros').toLowerCase()
+    const key = (d?.tipo_documento || 'otros').toLowerCase()
     if (!grupos[key]) grupos[key] = []
     grupos[key].push(d)
   }
@@ -167,5 +189,13 @@ export default function CompartirDocumentosOT() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function CompartirDocumentosOT() {
+  return (
+    <ErrorBoundaryCompartir>
+      <CompartirDocumentosOTInterno />
+    </ErrorBoundaryCompartir>
   )
 }

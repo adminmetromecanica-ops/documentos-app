@@ -386,16 +386,19 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
   const [modalRecordatorio, setModalRecordatorio] = useState(null)
+  const [mesSeleccionado, setMesSeleccionado] = useState('')
+  const [anioSeleccionado, setAnioSeleccionado] = useState('')
 
-  // Atajo: elegir un mes completo rellena "Desde"/"Hasta" automáticamente
-  // con el primer y último día de ese mes — sin perder la opción de un
-  // rango de fechas manual y más específico si se necesita.
-  function aplicarMesRapido(valorMes) {
-    if (!valorMes) { setFechaDesde(''); setFechaHasta(''); return }
-    const [anio, mes] = valorMes.split('-').map(Number)
-    const ultimoDia = new Date(anio, mes, 0).getDate()
-    setFechaDesde(`${valorMes}-01`)
-    setFechaHasta(`${valorMes}-${String(ultimoDia).padStart(2, '0')}`)
+  // Atajo: elegir mes + año rellena "Desde"/"Hasta" automáticamente con el
+  // primer y último día de ese mes — reemplaza el <input type="month">
+  // nativo (confuso, se veía como "---------- de ----") por dos selectores
+  // directos y grandes.
+  function aplicarMesRapido(mes, anio) {
+    if (!mes || !anio) { setFechaDesde(''); setFechaHasta(''); return }
+    const mesNum = Number(mes)
+    const ultimoDia = new Date(Number(anio), mesNum, 0).getDate()
+    setFechaDesde(`${anio}-${String(mesNum).padStart(2, '0')}-01`)
+    setFechaHasta(`${anio}-${String(mesNum).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`)
   }
 
   const acceso = AREAS_PERMITIDAS.includes(profile?.area)
@@ -629,11 +632,28 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
         </div>
         <div>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Mes rápido</label>
-          <input
-            type="month"
-            onChange={(e) => aplicarMesRapido(e.target.value)}
-            style={{ width: 190, fontSize: 16, fontWeight: 800, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
-          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select
+              value={mesSeleccionado}
+              onChange={(e) => { setMesSeleccionado(e.target.value); aplicarMesRapido(e.target.value, anioSeleccionado) }}
+              style={{ width: 140, fontSize: 16, fontWeight: 800, padding: '10px 8px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
+            >
+              <option value="">Mes</option>
+              {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'].map((nombre, i) => (
+                <option key={i} value={i + 1}>{nombre}</option>
+              ))}
+            </select>
+            <select
+              value={anioSeleccionado}
+              onChange={(e) => { setAnioSeleccionado(e.target.value); aplicarMesRapido(mesSeleccionado, e.target.value) }}
+              style={{ width: 100, fontSize: 16, fontWeight: 800, padding: '10px 8px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
+            >
+              <option value="">Año</option>
+              {[2025, 2026, 2027, 2028].map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
         </div>
         <div>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Desde</label>
