@@ -10,6 +10,14 @@ const AREAS_PERMITIDAS = ['contabilidad', 'gerencia']
 
 const DIAS_UMBRAL_POR_VENCER = 7
 const WEBHOOK_URL_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/url-documento"
+// ── Redirección directa (GET) para los enlaces del recordatorio ───────────
+// A diferencia de WEBHOOK_URL_DOCUMENTO (POST, usado por el botón "Ver"
+// dentro de la app, que sí puede esperar la respuesta), este enlace lo
+// abre directamente el CLIENTE desde su correo/WhatsApp — no hay ninguna
+// llamada previa nuestra que pueda fallar. El webhook resuelve el enlace
+// firmado de MinIO recién en el momento del clic y responde con una
+// redirección 302. Requiere el nuevo endpoint GET en n8n (ver instrucciones).
+const WEBHOOK_VER_DOCUMENTO_REDIRECT = "https://panel.5-189-165-144.sslip.io/api-patrones/ver-documento"
 
 // Estados de OT en los que ya debería existir una factura (o estar por
 // generarse pronto). Antes de "pendiente-fact" el servicio normalmente aún
@@ -218,15 +226,21 @@ function armarMensajeRecordatorio(c, cliente, semaforo) {
 
 // ── Busca en `documentos` TODO lo relevante de esta OT (factura, XML,
 // OC/proforma/cotización) — no solo el primero de cada tipo, todos los que
-// haya. Devuelve un array donde cada documento queda marcado como:
-//   - url: enlace listo para ver/descargar
-//   - error: true si el documento existe pero el webhook no pudo generar
-//     el enlace (falla real del servicio, no "no hay documento" — se
-//     distingue explícitamente para no dar información falsa)
+// haya. A diferencia de antes, NO llama a ningún webhook para resolver el
+// enlace por adelantado — el enlace se construye directo apuntando al
+// endpoint de redirección (WEBHOOK_VER_DOCUMENTO_REDIRECT), que resuelve
+// la URL firmada de MinIO recién cuando el destinatario hace clic. Esto
+// elimina por completo la posibilidad de "no aparecen los links": el botón
+// siempre se muestra, porque no depende de ninguna llamada previa que
+// pueda fallar (red, RLS, timing).
 // No se pueden adjuntar archivos automáticamente a un correo desde un
 // enlace en ningún proveedor (restricción de seguridad del navegador);
 // por eso siempre se resuelve como enlace de visualización, nunca adjunto.
 const TIPOS_DOC_RECORDATORIO = ['Factura', 'Factura XML', 'Orden de Compra', 'Cotización', 'Proforma']
+
+function construirEnlaceDocumento(rutaMinio) {
+  return `${WEBHOOK_VER_DOCUMENTO_REDIRECT}?ruta=${encodeURIComponent(rutaMinio)}`
+}
 
 async function buscarEnlacesDocumentos(otNumber) {
   try {
@@ -241,24 +255,15 @@ async function buscarEnlacesDocumentos(otNumber) {
       .eq('ot_number', otNumber)
       .or(filtroTipos)
       .order('created_at', { ascending: false })
+    if (error) console.error('Error buscando documentos para el recordatorio:', error)
     if (error || !docs) return []
 
-    return await Promise.all(docs.map(async (doc) => {
-      const item = { id: doc.id, tipo: doc.tipo_documento, nombre: doc.nombre_archivo, url: null, error: false }
-      if (!doc.ruta_minio) { item.error = true; return item }
-      try {
-        const resp = await fetch(WEBHOOK_URL_DOCUMENTO, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ruta_minio: doc.ruta_minio }),
-        })
-        const data = await resp.json()
-        if (data?.url) item.url = data.url
-        else item.error = true
-      } catch {
-        item.error = true
-      }
-      return item
+    return docs.map((doc) => ({
+      id: doc.id,
+      tipo: doc.tipo_documento,
+      nombre: doc.nombre_archivo,
+      url: doc.ruta_minio ? construirEnlaceDocumento(doc.ruta_minio) : null,
+      error: !doc.ruta_minio,
     }))
   } catch (e) {
     console.error('No se pudieron buscar los documentos para el recordatorio:', e)
@@ -415,7 +420,7 @@ function ModalRecordatorioCorreo({ datos, onClose, onCambiarMensaje, onReintenta
                         background: 'rgba(198,91,58,0.12)', border: '1px solid rgba(198,91,58,0.3)', color: '#c65b3a',
                       }}
                     >
-                      ⚠ {doc.tipo} "{doc.nombre}" existe, pero no se pudo generar el enlace (falla del servicio de documentos, no del recordatorio). Ábrelo desde "Documentos subidos" en la OT o vuelve a intentarlo ahí.
+                      ⚠ {doc.tipo} "{doc.nombre}" no tiene una ruta de archivo guardada — probablemente falló al subirse. Súbelo de nuevo desde "Documentos subidos" en la OT.
                     </div>
                   )
                 ))}
