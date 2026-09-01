@@ -30,6 +30,54 @@ function etiquetaDe(tipoDocumento) {
   return ETIQUETA_TIPO[key] || { icono: '📄', titulo: tipoDocumento || 'Otros documentos' }
 }
 
+// Carpeta colapsable por tipo de documento — mismo patrón visual que ya
+// usamos en "Documentos subidos" dentro de las OT (ícono + título + badge
+// contador redondo, se expande al hacer clic).
+function CarpetaDocumentos({ tipo, docs }) {
+  const [abierta, setAbierta] = useState(true)
+  const etiqueta = etiquetaDe(tipo)
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden', marginBottom: 14 }}>
+      <button
+        onClick={() => setAbierta((v) => !v)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 18px', border: 'none', background: '#f7fbfc', cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 10, color: '#1f7a8c', transform: abierta ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
+          <span style={{ fontSize: 20 }}>{etiqueta.icono}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: '#16232b' }}>{etiqueta.titulo}</span>
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 800, background: '#1f7a8c', color: '#fff', borderRadius: 999, padding: '3px 12px', minWidth: 24, textAlign: 'center' }}>
+          {docs.length}
+        </span>
+      </button>
+      {abierta && (
+        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {docs.map((d, i) => (
+            <a
+              key={i}
+              href={construirEnlaceDocumento(d.ruta_minio)}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', borderRadius: 8, border: '1px solid #dde4e9',
+                background: '#fafbfc', textDecoration: 'none', color: '#16232b', fontSize: 13,
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 12 }}>{d.nombre_archivo}</span>
+              <span style={{ color: '#1f7a8c', fontWeight: 700, flexShrink: 0 }}>👁 Ver / Descargar</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CompartirDocumentosOT() {
   const { otNumber } = useParams()
   const [searchParams] = useSearchParams()
@@ -110,34 +158,9 @@ export default function CompartirDocumentosOT() {
           </div>
         )}
 
-        {estado === 'ok' && documentos.length > 0 && Object.entries(grupos).map(([tipo, docs]) => {
-          const etiqueta = etiquetaDe(tipo)
-          return (
-            <div key={tipo} style={{ background: '#fff', borderRadius: 12, border: '1px solid #e2e8f0', padding: 18, marginBottom: 14 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#16232b', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 18 }}>{etiqueta.icono}</span> {etiqueta.titulo} ({docs.length})
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {docs.map((d, i) => (
-                  <a
-                    key={i}
-                    href={construirEnlaceDocumento(d.ruta_minio)}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '10px 14px', borderRadius: 8, border: '1px solid #dde4e9',
-                      background: '#fafbfc', textDecoration: 'none', color: '#16232b', fontSize: 13,
-                    }}
-                  >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 12 }}>{d.nombre_archivo}</span>
-                    <span style={{ color: '#1f7a8c', fontWeight: 700, flexShrink: 0 }}>👁 Ver / Descargar</span>
-                  </a>
-                ))}
-              </div>
-            </div>
-          )
-        })}
+        {estado === 'ok' && documentos.length > 0 && Object.entries(grupos).map(([tipo, docs]) => (
+          <CarpetaDocumentos key={tipo} tipo={tipo} docs={docs} />
+        ))}
 
         <p style={{ textAlign: 'center', fontSize: 11, color: '#94a3b8', marginTop: 30 }}>
           Este enlace es de uso exclusivo para el cliente de esta orden de trabajo. Ante cualquier duda, contáctenos.
