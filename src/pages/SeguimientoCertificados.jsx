@@ -129,7 +129,6 @@ function tieneValorReal(valor) {
 
 function armarMensajeRecordatorio(fila) {
   const { ot_number, client, due_date, equipos, certificados, trazabilidades, ingresos } = fila
-  const completo = equipos > 0 && certificados >= equipos && trazabilidades >= equipos
 
   const listaEquipos = (Array.isArray(ingresos) ? ingresos : [])
     .map((eq, i) => {
@@ -142,23 +141,17 @@ function armarMensajeRecordatorio(fila) {
     })
     .join('\n')
 
-  const parrafoCierre = completo
-    ? 'Todos los certificados y registros de trazabilidad de esta orden ya están disponibles — puede descargarlos desde los enlaces al final de este correo.'
-    : 'Nuestro equipo técnico se encuentra finalizando los documentos pendientes de esta orden y se los haremos llegar a la brevedad. Le compartimos igualmente los que ya están disponibles a la fecha, al final de este correo.'
-
   return [
     `Estimados ${client || 'señores'},`,
     '',
-    `El Laboratorio de Calibración de MetroMecánica Ingeniería y Metrología S.A.C. le informa el estado de los certificados de calibración correspondientes a la orden de trabajo ${ot_number}${due_date ? ` (fecha de entrega: ${fmtFecha(due_date)})` : ''}.`,
+    `Adjuntamos los certificados de calibración y registros de trazabilidad correspondientes a la orden de trabajo ${ot_number}${due_date ? ` (fecha de entrega: ${fmtFecha(due_date)})` : ''}.`,
     '',
     'Resumen:',
-    `• Equipos ingresados: ${equipos}`,
-    `• Certificados de calibración emitidos: ${certificados} de ${equipos}`,
-    `• Registros de trazabilidad emitidos: ${trazabilidades} de ${equipos}`,
+    `• Equipos calibrados: ${equipos}`,
+    `• Certificados de calibración: ${certificados} de ${equipos}`,
+    `• Registros de trazabilidad: ${trazabilidades} de ${equipos}`,
     '',
     ...(listaEquipos ? ['Equipos incluidos en esta orden:', listaEquipos, ''] : []),
-    parrafoCierre,
-    '',
     'Ante cualquier consulta sobre el detalle técnico de los certificados, no dude en escribirnos.',
     '',
     'Saludos cordiales,',
