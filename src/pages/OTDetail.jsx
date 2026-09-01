@@ -998,10 +998,42 @@ function CobranzaCard({ otNumber, rucOT, clienteOT, contactoOT, correoOT, puedeE
   }
 
   // ── Sube el archivo de factura (PDF o XML) como documento del área ──────
-  // Contabilidad, en MinIO. Se usa tanto para el PDF como para el XML —
-  // ambos quedan disponibles en "Documentos subidos" con su propio tipo.
+  // Contabilidad, en MinIO. Antes de subir, revisa si ya existe un
+  // documento del mismo tipo (Factura o Factura XML) para esta OT —
+  // buscando en TODAS las áreas, no solo Contabilidad — y si es así,
+  // pregunta si se debe reemplazar en vez de acumular copias, igual que
+  // ya hacemos con el Acta de Conformidad en MetroTrack.
   async function subirDocumentoFactura(file, tipoDocumento, subcarpeta) {
     try {
+      const { data: existentes, error: errBuscar } = await supabase
+        .from('documentos')
+        .select('id, nombre_archivo, created_at')
+        .eq('ot_number', otNumber)
+        .ilike('tipo_documento', tipoDocumento)
+
+      if (errBuscar) {
+        console.error('No se pudo verificar documentos existentes:', errBuscar)
+      }
+
+      if (existentes && existentes.length > 0) {
+        const masReciente = [...existentes].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
+        const fechaTexto = new Date(masReciente.created_at).toLocaleString('es-PE', {
+          day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+        })
+        const confirmarReemplazo = confirm(
+          `⚠ Ya existe un documento de tipo "${tipoDocumento}" para esta OT ` +
+          `("${masReciente.nombre_archivo}", subido el ${fechaTexto}${existentes.length > 1 ? `, y ${existentes.length - 1} más` : ''}).\n\n` +
+          `Si continúas, se REEMPLAZARÁ por el archivo nuevo.\n\n¿Deseas continuar?`
+        )
+        if (!confirmarReemplazo) return
+
+        const { error: errBorrado } = await supabase.from('documentos').delete().in('id', existentes.map((d) => d.id))
+        if (errBorrado) {
+          alert('No se pudo reemplazar el documento anterior: ' + errBorrado.message)
+          return
+        }
+      }
+
       const { data: { user } } = await supabase.auth.getUser()
       const nombreSeguro = sanitizarNombreArchivo(file.name)
       const fd = new FormData()
