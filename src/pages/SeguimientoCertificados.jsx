@@ -33,6 +33,36 @@ function extraerTelefonoDeContacto(contactoTexto) {
 // ── Cuenta desde la que Laboratorio envía los recordatorios ──────────────
 const CORREO_REMITENTE_LABORATORIO = 'laboratorio@metromecanica.com.pe'
 
+// ── Página pública para compartir documentos (sin login) ─────────────
+// Cuando hay más de este umbral de documentos, en vez de listar cada
+// enlace individual en el correo (saturado y poco elegante), se genera
+// UN solo enlace a la página pública "/compartir/:otNumber?token=..." con
+// todos los documentos organizados ahí — ver CompartirDocumentosOT.jsx.
+const UMBRAL_ENLACE_UNICO = 5
+const URL_APP_PUBLICA = 'https://documentos-app-ten.vercel.app'
+
+// Reutiliza el token si ya existe uno para esa OT (para no generar links
+// distintos cada vez que se envía un recordatorio de la misma orden); si
+// no existe, crea uno nuevo y lo guarda.
+async function obtenerOCrearTokenCompartido(otNumber) {
+  const { data: existente } = await supabase
+    .from('enlaces_compartidos')
+    .select('token')
+    .eq('ot_number', otNumber)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (existente?.token) return existente.token
+
+  const token = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/-/g, '')
+  const { error } = await supabase.from('enlaces_compartidos').insert({ ot_number: otNumber, token })
+  if (error) {
+    console.error('No se pudo crear el enlace compartido:', error)
+    return null
+  }
+  return token
+}
+
 // Compositor web de Gmail — con parámetro authuser fijo, igual que en
 // Seguimiento de Facturas (contabilidad@): si esa cuenta está logueada en
 // el navegador, el compositor se abre directo desde ahí.
@@ -416,11 +446,8 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       })
   }, [filas, tab, busqueda, fechaDesde, fechaHasta])
 
-  // ── Anexa los enlaces de documentos al propio texto del mensaje ────────
-  // Mismo bug (y mismo arreglo) que tuvimos en Seguimiento de Facturas: los
-  // documentos se mostraban como botones en el modal pero nunca viajaban
-  // en el correo real. Ahora se agregan al final del mensaje mismo (lo que
-  // se edita, se copia y se manda a Gmail).
+  // ── Anexa los enlaces al mensaje — individuales si son pocos, o un solo
+  // enlace a la página pública si son más de UMBRAL_ENLACE_UNICO. ────────
   async function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
@@ -431,10 +458,19 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
     const documentos = [...fila.docsCertificados, ...fila.docsTrazabilidades].map((d) => ({
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
-    const lineasDocs = documentos.map((d) => `${d.tipo}: ${d.url}`)
-    const mensaje = lineasDocs.length > 0
-      ? `${mensajeBase}\n\nDocumentos:\n${lineasDocs.join('\n')}`
-      : mensajeBase
+
+    let mensaje = mensajeBase
+    if (documentos.length > UMBRAL_ENLACE_UNICO) {
+      const token = await obtenerOCrearTokenCompartido(fila.ot_number)
+      if (token) {
+        const enlaceUnico = `${URL_APP_PUBLICA}/compartir/${encodeURIComponent(fila.ot_number)}?token=${token}`
+        mensaje = `${mensajeBase}\n\nPuede ver y descargar todos los documentos (${documentos.length}) desde este enlace:\n${enlaceUnico}`
+      }
+    } else if (documentos.length > 0) {
+      const lineasDocs = documentos.map((d) => `${d.tipo}: ${d.url}`)
+      mensaje = `${mensajeBase}\n\nDocumentos:\n${lineasDocs.join('\n')}`
+    }
+
     setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos })
   }
 
