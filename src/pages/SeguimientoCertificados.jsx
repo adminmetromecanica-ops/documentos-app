@@ -567,30 +567,44 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
         <div>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Buscar</label>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Buscar</label>
           <input
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar por OT o cliente..."
-            style={{ width: 260 }}
+            style={{ width: 260, fontSize: 16, fontWeight: 700, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10 }}
           />
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Mes rápido</label>
-          <input type="month" onChange={(e) => aplicarMesRapido(e.target.value)} style={{ width: 170 }} />
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Mes rápido</label>
+          <input
+            type="month"
+            onChange={(e) => aplicarMesRapido(e.target.value)}
+            style={{ width: 190, fontSize: 16, fontWeight: 800, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
+          />
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Desde</label>
-          <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} style={{ width: 155 }} />
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Desde</label>
+          <input
+            type="date"
+            value={fechaDesde}
+            onChange={(e) => setFechaDesde(e.target.value)}
+            style={{ width: 175, fontSize: 16, fontWeight: 800, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
+          />
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Hasta</label>
-          <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} style={{ width: 155 }} />
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Hasta</label>
+          <input
+            type="date"
+            value={fechaHasta}
+            onChange={(e) => setFechaHasta(e.target.value)}
+            style={{ width: 175, fontSize: 16, fontWeight: 800, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
+          />
         </div>
         {(fechaDesde || fechaHasta) && (
-          <button className="btn btn-secondary" onClick={() => { setFechaDesde(''); setFechaHasta('') }}>
+          <button className="btn btn-secondary" style={{ fontSize: 14, fontWeight: 800, padding: '10px 16px' }} onClick={() => { setFechaDesde(''); setFechaHasta('') }}>
             ✕ Limpiar fechas
           </button>
         )}
