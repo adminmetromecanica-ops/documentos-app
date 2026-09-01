@@ -22,26 +22,33 @@ function diasDeAtraso(due_date) {
   return Math.round((hoy - fecha) / (1000 * 60 * 60 * 24))
 }
 
-// ── Indicador de estado de facturación — solo visible para Contabilidad/Gerencia ──
+// ── Semáforos por área — SOLO uno activo a la vez por persona ────────────
 // Antes competía con el color de prioridad de la OT (mismo esquema rojo/
 // amarillo/gris para dos cosas distintas → confuso, especialmente con baja
-// visión). Ahora, cuando esta vista está activa, el color de PRIORIDAD deja
-// de usarse: todo el color de la tarjeta pasa a representar únicamente el
-// estado de la factura, y el texto queda en un tono neutro. Un solo
-// semáforo, un solo significado.
+// visión). Cada área ve el semáforo que le corresponde a ELLA, nunca el de
+// otra: Contabilidad ve estado de factura, Comercial ve estado de
+// documentos (Proforma/OC). Nunca se combinan para la misma persona —
+// mostrarlos juntos volvería a producir el mismo conflicto visual que ya
+// corregimos una vez.
 const ESTADO_FACTURA_CFG = {
   cobrado: { color: '#4ade80', titulo: 'Factura cobrada', texto: 'COBRADA', icono: '✓' },
   pendiente: { color: '#facc15', titulo: 'Factura registrada — pendiente de cobro', texto: 'FACTURADA', icono: '$' },
   sin_factura: { color: '#f87171', titulo: 'Sin factura registrada', texto: 'SIN FACTURA', icono: '!' },
 }
 
+const ESTADO_DOCS_COMERCIAL_CFG = {
+  completo: { color: '#4ade80', titulo: 'Proforma y Orden de Compra subidas', texto: 'COMPLETO', icono: '✓' },
+  parcial: { color: '#facc15', titulo: 'Falta Proforma u Orden de Compra (solo tiene una)', texto: 'FALTA 1', icono: '½' },
+  sin_documentos: { color: '#f87171', titulo: 'Sin Proforma ni Orden de Compra subidas', texto: 'SIN DOCS', icono: '✕' },
+}
+
 // Chip grande con ícono + texto — usado donde hay espacio (modal, atrasadas)
-function ChipFactura({ estado }) {
-  const cfg = ESTADO_FACTURA_CFG[estado]
-  if (!cfg) return null
+function ChipEstado({ estado, cfg }) {
+  const c = cfg[estado]
+  if (!c) return null
   return (
     <span
-      title={cfg.titulo}
+      title={c.titulo}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -50,27 +57,27 @@ function ChipFactura({ estado }) {
         fontWeight: 800,
         letterSpacing: 0.5,
         color: '#0a0e14',
-        background: cfg.color,
+        background: c.color,
         borderRadius: 6,
         padding: '3px 9px',
         flexShrink: 0,
       }}
     >
-      <span style={{ fontSize: 13, lineHeight: 1 }}>{cfg.icono}</span>
-      {cfg.texto}
+      <span style={{ fontSize: 13, lineHeight: 1 }}>{c.icono}</span>
+      {c.texto}
     </span>
   )
 }
 
 // Estilo de la tarjeta de una OT dentro de una celda del calendario.
-// - Vista normal (mostrarFactura=false): color por prioridad, como siempre.
-// - Vista Contabilidad/Gerencia (mostrarFactura=true): color SOLO por estado
-//   de factura — fondo tintado + franja lateral del mismo color, texto
-//   neutro. Se evita mezclar dos semáforos con la misma paleta.
-function estiloItemCelda(s, mostrarFactura, facturaPorOT) {
-  if (mostrarFactura) {
-    const estado = facturaPorOT[s.ot_number] || 'sin_factura'
-    const cfg = ESTADO_FACTURA_CFG[estado]
+// - Sin semáforo activo (overlay.activo=false): color por prioridad, como
+//   siempre — para cualquier área que no sea la dueña de un semáforo.
+// - Con semáforo activo: color SOLO por ese estado — fondo tintado + franja
+//   lateral del mismo color, texto neutro. Nunca se mezcla con prioridad.
+function estiloItemCelda(s, overlay) {
+  if (overlay?.activo) {
+    const estado = overlay.estadoPorOT[s.ot_number] || overlay.defaultEstado
+    const cfg = overlay.cfg[estado]
     return {
       background: `${cfg.color}26`,
       borderLeft: `6px solid ${cfg.color}`,
@@ -86,9 +93,9 @@ function estiloItemCelda(s, mostrarFactura, facturaPorOT) {
 
 // Estilo de fila (modal / lista de atrasadas) — misma lógica, adaptada a
 // filas horizontales en vez de tarjetas de celda.
-function estiloFila(mostrarFactura, estado) {
-  if (!mostrarFactura) return {}
-  const cfg = ESTADO_FACTURA_CFG[estado]
+function estiloFila(overlay, estado) {
+  if (!overlay?.activo) return {}
+  const cfg = overlay.cfg[estado]
   return {
     borderLeft: `6px solid ${cfg.color}`,
     background: `${cfg.color}14`,
@@ -97,7 +104,7 @@ function estiloFila(mostrarFactura, estado) {
 
 // Modal: muestra TODAS las OT de un día, sin límite — pensado para
 // días con carga alta (10, 15, 30+ servicios).
-function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorOT }) {
+function DiaModal({ fecha, items, onClose, navigate, overlay }) {
   return (
     <div
       onClick={onClose}
@@ -121,7 +128,7 @@ function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorO
         </div>
         <div style={{ overflowY: 'auto', padding: '8px 12px' }}>
           {items.map((s) => {
-            const estadoFactura = facturaPorOT[s.ot_number] || 'sin_factura'
+            const estado = overlay?.activo ? (overlay.estadoPorOT[s.ot_number] || overlay.defaultEstado) : null
             return (
               <div
                 key={s.id}
@@ -130,7 +137,7 @@ function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorO
                 style={{
                   cursor: 'pointer',
                   padding: '10px 12px',
-                  ...estiloFila(mostrarFactura, estadoFactura),
+                  ...estiloFila(overlay, estado),
                 }}
               >
                 <div>
@@ -138,8 +145,8 @@ function DiaModal({ fecha, items, onClose, navigate, mostrarFactura, facturaPorO
                   <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{s.client}</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {mostrarFactura ? (
-                    <ChipFactura estado={estadoFactura} />
+                  {overlay?.activo ? (
+                    <ChipEstado estado={estado} cfg={overlay.cfg} />
                   ) : (
                     <span className={`badge badge-${s.priority === 'alta' ? 'alta' : s.priority === 'media' ? 'media' : 'normal'}`}>
                       {s.priority}
@@ -240,13 +247,16 @@ export default function CalendarView({ services, profile }) {
   const [mesActual, setMesActual] = useState(new Date())
   const [diaSeleccionado, setDiaSeleccionado] = useState(null) // { fecha, items } | null
   const [facturaPorOT, setFacturaPorOT] = useState({})
+  const [docsComercialPorOT, setDocsComercialPorOT] = useState({})
   const navigate = useNavigate()
 
-  // Visible para Contabilidad (dueña del dato) y Gerencia/admin@ (supervisión).
-  const mostrarFactura = ['contabilidad', 'gerencia'].includes(profile?.area)
+  // Visible solo para Contabilidad (dueña del dato de facturación).
+  const mostrarFactura = profile?.area === 'contabilidad'
+  // Visible solo para Comercial (dueña de Proforma/Orden de Compra). No se
+  // activa junto con mostrarFactura para nadie — evita el conflicto visual
+  // de dos semáforos compitiendo por el mismo color en la misma tarjeta.
+  const mostrarDocsComercial = profile?.area === 'comercial'
 
-  // Solo Contabilidad/Gerencia necesitan este cruce — se evita la consulta
-  // para el resto de áreas, que no ven el indicador.
   useEffect(() => {
     if (!mostrarFactura) return
     async function cargarFacturas() {
@@ -263,6 +273,54 @@ export default function CalendarView({ services, profile }) {
     }
     cargarFacturas()
   }, [mostrarFactura])
+
+  // Solo Comercial necesita este cruce — busca en `documentos` (todas las
+  // áreas, por si acaso) qué OT ya tienen Proforma y/o Orden de Compra /
+  // Cotización subidas.
+  useEffect(() => {
+    if (!mostrarDocsComercial) return
+    async function cargarDocsComercial() {
+      const tipos = ['proforma', 'orden de compra', 'cotización']
+      const filtro = tipos.map((t) => `tipo_documento.ilike.${t}`).join(',')
+      const { data, error } = await supabase.from('documentos').select('ot_number, tipo_documento').or(filtro)
+      if (error) {
+        console.error('No se pudo cargar estado de documentos comerciales:', error)
+        return
+      }
+      const acumulado = {}
+      for (const row of data || []) {
+        const tipoLower = (row.tipo_documento || '').toLowerCase()
+        if (!acumulado[row.ot_number]) acumulado[row.ot_number] = { proforma: false, oc: false }
+        if (tipoLower === 'proforma') acumulado[row.ot_number].proforma = true
+        if (tipoLower === 'orden de compra' || tipoLower === 'cotización') acumulado[row.ot_number].oc = true
+      }
+      const mapa = {}
+      for (const [ot, v] of Object.entries(acumulado)) {
+        mapa[ot] = v.proforma && v.oc ? 'completo' : (v.proforma || v.oc) ? 'parcial' : 'sin_documentos'
+      }
+      setDocsComercialPorOT(mapa)
+    }
+    cargarDocsComercial()
+  }, [mostrarDocsComercial])
+
+  // ── Semáforo activo para esta persona (uno solo, nunca ambos) ──────────
+  const overlay = mostrarFactura
+    ? {
+        activo: true,
+        cfg: ESTADO_FACTURA_CFG,
+        estadoPorOT: facturaPorOT,
+        defaultEstado: 'sin_factura',
+        leyenda: 'En esta vista el color indica solo el estado de la factura — no la prioridad del servicio.',
+      }
+    : mostrarDocsComercial
+    ? {
+        activo: true,
+        cfg: ESTADO_DOCS_COMERCIAL_CFG,
+        estadoPorOT: docsComercialPorOT,
+        defaultEstado: 'sin_documentos',
+        leyenda: 'En esta vista el color indica solo si faltan Proforma/Orden de Compra — no la prioridad del servicio.',
+      }
+    : { activo: false }
 
   const año = mesActual.getFullYear()
   const mes = mesActual.getMonth()
@@ -339,11 +397,11 @@ export default function CalendarView({ services, profile }) {
         <button className="btn btn-secondary" onClick={() => setMesActual(new Date(año, mes + 1, 1))}>&rarr;</button>
       </div>
 
-      {mostrarFactura && (
+      {overlay.activo && (
         <div style={{ marginBottom: 14 }}>
           <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-            {['cobrado', 'pendiente', 'sin_factura'].map((k) => {
-              const cfg = ESTADO_FACTURA_CFG[k]
+            {Object.keys(overlay.cfg).map((k) => {
+              const cfg = overlay.cfg[k]
               return (
                 <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{
@@ -359,7 +417,7 @@ export default function CalendarView({ services, profile }) {
             })}
           </div>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>
-            En esta vista el color indica solo el estado de la factura — no la prioridad del servicio.
+            {overlay.leyenda}
           </p>
         </div>
       )}
@@ -415,7 +473,7 @@ export default function CalendarView({ services, profile }) {
                         borderRadius: 4,
                         overflow: 'hidden',
                         lineHeight: 1.2,
-                        ...estiloItemCelda(s, mostrarFactura, facturaPorOT),
+                        ...estiloItemCelda(s, overlay),
                       }}
                     >
                       <div style={{ fontWeight: 700, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
@@ -446,7 +504,7 @@ export default function CalendarView({ services, profile }) {
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No hay servicios atrasados. Buen trabajo.</p>
         )}
         {atrasadas.map((s) => {
-          const estadoFactura = facturaPorOT[s.ot_number] || 'sin_factura'
+          const estado = overlay.activo ? (overlay.estadoPorOT[s.ot_number] || overlay.defaultEstado) : null
           return (
             <div
               key={s.id}
@@ -454,7 +512,7 @@ export default function CalendarView({ services, profile }) {
               onClick={() => navigate(`/ot/${s.ot_number}`)}
               style={{
                 cursor: 'pointer',
-                ...estiloFila(mostrarFactura, estadoFactura),
+                ...estiloFila(overlay, estado),
               }}
             >
               <div>
@@ -462,7 +520,7 @@ export default function CalendarView({ services, profile }) {
                 <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{s.client}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {mostrarFactura && <ChipFactura estado={estadoFactura} />}
+                {overlay.activo && <ChipEstado estado={estado} cfg={overlay.cfg} />}
                 <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 13 }}>
                   {diasDeAtraso(s.due_date)} día{diasDeAtraso(s.due_date) !== 1 ? 's' : ''} de retraso
                 </span>
@@ -478,8 +536,7 @@ export default function CalendarView({ services, profile }) {
           items={diaSeleccionado.items}
           onClose={() => setDiaSeleccionado(null)}
           navigate={navigate}
-          mostrarFactura={mostrarFactura}
-          facturaPorOT={facturaPorOT}
+          overlay={overlay}
         />
       )}
     </div>
