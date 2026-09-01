@@ -30,8 +30,15 @@ function extraerTelefonoDeContacto(contactoTexto) {
   return match[1].replace(/[\s-]/g, '')
 }
 
-// ── Cuenta desde la que Laboratorio envía los recordatorios ──────────────
-const CORREO_REMITENTE_LABORATORIO = 'laboratorio@metromecanica.com.pe'
+// ── Cuentas disponibles como remitente ────────────────────────────────
+// Se puede elegir en el modal — la app no puede forzar cuál usa Gmail
+// (eso depende de qué cuentas tengas logueadas en el navegador), pero al
+// menos deja armar el enlace con la que corresponda.
+const CUENTAS_REMITENTE = [
+  { valor: 'laboratorio@metromecanica.com.pe', etiqueta: 'Laboratorio' },
+  { valor: 'contabilidad@metromecanica.com.pe', etiqueta: 'Contabilidad' },
+  { valor: 'admin@metromecanica.com.pe', etiqueta: 'Administración' },
+]
 
 // ── Página pública para compartir documentos (sin login) ─────────────
 // Cuando hay más de este umbral de documentos, en vez de listar cada
@@ -63,13 +70,16 @@ async function obtenerOCrearTokenCompartido(otNumber) {
   return token
 }
 
-// Compositor web de Gmail — con parámetro authuser fijo, igual que en
-// Seguimiento de Facturas (contabilidad@): si esa cuenta está logueada en
-// el navegador, el compositor se abre directo desde ahí.
-function construirLinkCorreo(destinatario, asunto, cuerpo) {
+function construirLinkPaginaPublica(otNumber, token) {
+  return `${URL_APP_PUBLICA}/compartir/${encodeURIComponent(otNumber)}?token=${token}`
+}
+
+// Compositor web de Gmail — ahora recibe el remitente como parámetro (en
+// vez de una constante fija), para que se pueda elegir en el modal.
+function construirLinkCorreo(destinatario, asunto, cuerpo, remitente) {
   const params = new URLSearchParams({
     view: 'cm', fs: '1', to: destinatario, su: asunto, body: cuerpo,
-    authuser: CORREO_REMITENTE_LABORATORIO,
+    authuser: remitente,
   })
   return `https://mail.google.com/mail/?${params.toString()}`
 }
@@ -191,10 +201,26 @@ function Badge({ estado }) {
 // ── Modal de recordatorio — mismo patrón que Seguimiento de Facturas ────
 function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
   const { ot, correo, mensaje, cargandoDocs, documentos } = datos
-  const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje)
+  const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
+  const [cargandoVistaPrevia, setCargandoVistaPrevia] = useState(false)
+  const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
+  }
+
+  // Siempre disponible, sin importar cuántos documentos tenga la OT — para
+  // poder ver/probar la página del cliente en cualquier momento, no solo
+  // cuando se supera el umbral de envío automático por enlace único.
+  async function abrirVistaPrevia() {
+    setCargandoVistaPrevia(true)
+    const token = await obtenerOCrearTokenCompartido(ot.ot_number)
+    setCargandoVistaPrevia(false)
+    if (!token) {
+      alert('No se pudo generar el enlace de vista previa.')
+      return
+    }
+    window.open(construirLinkPaginaPublica(ot.ot_number, token), '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -213,10 +239,23 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
         </div>
 
         <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-          <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
-            <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
+              <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
+              <select value={remitente} onChange={(e) => setRemitente(e.target.value)} style={{ width: '100%' }}>
+                {CUENTAS_REMITENTE.map((c) => (
+                  <option key={c.valor} value={c.valor}>{c.etiqueta}</option>
+                ))}
+              </select>
+            </div>
           </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-10px 0 0' }}>
+            Solo funciona si esa cuenta ya está logueada en tu navegador — si no, Gmail abrirá con la que sí lo esté.
+          </p>
 
           <div>
             <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
@@ -229,7 +268,18 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Documentos</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: 11, padding: '4px 10px' }}
+                disabled={cargandoVistaPrevia}
+                onClick={abrirVistaPrevia}
+                title="Abre la misma página que vería el cliente, sin importar cuántos documentos tenga"
+              >
+                {cargandoVistaPrevia ? '⏳...' : '🔎 Vista previa (página del cliente)'}
+              </button>
+            </div>
             {cargandoDocs ? (
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
             ) : !documentos || documentos.length === 0 ? (
@@ -255,7 +305,7 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
 
         <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${CORREO_REMITENTE_LABORATORIO}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${remitente}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
             📧 Abrir en Gmail para enviar
           </a>
         </div>
