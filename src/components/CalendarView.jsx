@@ -42,6 +42,11 @@ const ESTADO_DOCS_COMERCIAL_CFG = {
   sin_documentos: { color: '#f87171', titulo: 'Sin Proforma ni Orden de Compra subidas', texto: 'SIN DOCS', icono: '✕' },
 }
 
+const ESTADO_CERT_LAB_CFG = {
+  con_certificado: { color: '#4ade80', titulo: 'Certificado de calibración subido', texto: 'CON CERTIFICADO', icono: '✓' },
+  sin_certificado: { color: '#f87171', titulo: 'Sin certificado de calibración subido', texto: 'SIN CERTIFICADO', icono: '✕' },
+}
+
 // Chip grande con ícono + texto — usado donde hay espacio (modal, atrasadas)
 function ChipEstado({ estado, cfg }) {
   const c = cfg[estado]
@@ -248,17 +253,28 @@ export default function CalendarView({ services, profile }) {
   const [diaSeleccionado, setDiaSeleccionado] = useState(null) // { fecha, items } | null
   const [facturaPorOT, setFacturaPorOT] = useState({})
   const [docsComercialPorOT, setDocsComercialPorOT] = useState({})
+  const [certLabPorOT, setCertLabPorOT] = useState({})
+  const [vistaGerencia, setVistaGerencia] = useState('ninguno')
   const navigate = useNavigate()
 
+  const esGerencia = profile?.area === 'gerencia'
   // Visible solo para Contabilidad (dueña del dato de facturación).
   const mostrarFactura = profile?.area === 'contabilidad'
-  // Visible solo para Comercial (dueña de Proforma/Orden de Compra). No se
-  // activa junto con mostrarFactura para nadie — evita el conflicto visual
-  // de dos semáforos compitiendo por el mismo color en la misma tarjeta.
+  // Visible solo para Comercial (dueña de Proforma/Orden de Compra).
   const mostrarDocsComercial = profile?.area === 'comercial'
+  // Visible solo para Laboratorio (dueño de los certificados de calibración).
+  const mostrarCertLab = profile?.area === 'laboratorio'
+
+  // Gerencia no tiene un semáforo "propio" — supervisa las tres áreas, así
+  // que en vez de mostrarle los tres a la vez (mismo conflicto visual que
+  // ya corregimos), elige cuál quiere ver con un selector. Nunca se
+  // combinan dos semáforos para la misma persona, tampoco para Gerencia.
+  const necesitaFactura = mostrarFactura || (esGerencia && vistaGerencia === 'factura')
+  const necesitaDocsComercial = mostrarDocsComercial || (esGerencia && vistaGerencia === 'docsComercial')
+  const necesitaCertLab = mostrarCertLab || (esGerencia && vistaGerencia === 'certLab')
 
   useEffect(() => {
-    if (!mostrarFactura) return
+    if (!necesitaFactura) return
     async function cargarFacturas() {
       const { data, error } = await supabase.from('cobranza').select('ot_number, estado')
       if (error) {
@@ -272,13 +288,12 @@ export default function CalendarView({ services, profile }) {
       setFacturaPorOT(mapa)
     }
     cargarFacturas()
-  }, [mostrarFactura])
+  }, [necesitaFactura])
 
-  // Solo Comercial necesita este cruce — busca en `documentos` (todas las
-  // áreas, por si acaso) qué OT ya tienen Proforma y/o Orden de Compra /
-  // Cotización subidas.
+  // Cruza `documentos` (todas las áreas) buscando qué OT ya tienen Proforma
+  // y/o Orden de Compra / Cotización subidas.
   useEffect(() => {
-    if (!mostrarDocsComercial) return
+    if (!necesitaDocsComercial) return
     async function cargarDocsComercial() {
       const tipos = ['proforma', 'orden de compra', 'cotización']
       const filtro = tipos.map((t) => `tipo_documento.ilike.${t}`).join(',')
@@ -301,7 +316,26 @@ export default function CalendarView({ services, profile }) {
       setDocsComercialPorOT(mapa)
     }
     cargarDocsComercial()
-  }, [mostrarDocsComercial])
+  }, [necesitaDocsComercial])
+
+  // Cruza `documentos` buscando qué OT ya tienen al menos un Certificado de
+  // calibración subido (cualquier área, aunque normalmente es Laboratorio).
+  useEffect(() => {
+    if (!necesitaCertLab) return
+    async function cargarCertLab() {
+      const { data, error } = await supabase.from('documentos').select('ot_number, tipo_documento').ilike('tipo_documento', 'certificado')
+      if (error) {
+        console.error('No se pudo cargar estado de certificados:', error)
+        return
+      }
+      const mapa = {}
+      for (const row of data || []) {
+        mapa[row.ot_number] = 'con_certificado'
+      }
+      setCertLabPorOT(mapa)
+    }
+    cargarCertLab()
+  }, [necesitaCertLab])
 
   // ── Semáforo activo para esta persona (uno solo, nunca ambos) ──────────
   const overlay = mostrarFactura
@@ -319,6 +353,38 @@ export default function CalendarView({ services, profile }) {
         estadoPorOT: docsComercialPorOT,
         defaultEstado: 'sin_documentos',
         leyenda: 'En esta vista el color indica solo si faltan Proforma/Orden de Compra — no la prioridad del servicio.',
+      }
+    : mostrarCertLab
+    ? {
+        activo: true,
+        cfg: ESTADO_CERT_LAB_CFG,
+        estadoPorOT: certLabPorOT,
+        defaultEstado: 'sin_certificado',
+        leyenda: 'En esta vista el color indica solo si falta el certificado de calibración — no la prioridad del servicio.',
+      }
+    : esGerencia && vistaGerencia === 'factura'
+    ? {
+        activo: true,
+        cfg: ESTADO_FACTURA_CFG,
+        estadoPorOT: facturaPorOT,
+        defaultEstado: 'sin_factura',
+        leyenda: 'Viendo el semáforo de Contabilidad — no la prioridad del servicio.',
+      }
+    : esGerencia && vistaGerencia === 'docsComercial'
+    ? {
+        activo: true,
+        cfg: ESTADO_DOCS_COMERCIAL_CFG,
+        estadoPorOT: docsComercialPorOT,
+        defaultEstado: 'sin_documentos',
+        leyenda: 'Viendo el semáforo de Comercial — no la prioridad del servicio.',
+      }
+    : esGerencia && vistaGerencia === 'certLab'
+    ? {
+        activo: true,
+        cfg: ESTADO_CERT_LAB_CFG,
+        estadoPorOT: certLabPorOT,
+        defaultEstado: 'sin_certificado',
+        leyenda: 'Viendo el semáforo de Laboratorio — no la prioridad del servicio.',
       }
     : { activo: false }
 
@@ -396,6 +462,27 @@ export default function CalendarView({ services, profile }) {
         <strong style={{ fontSize: 16 }}>{MESES[mes]} {año}</strong>
         <button className="btn btn-secondary" onClick={() => setMesActual(new Date(año, mes + 1, 1))}>&rarr;</button>
       </div>
+
+      {esGerencia && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Semáforo a mostrar:</span>
+          {[
+            ['ninguno', 'Ninguno (solo prioridad)'],
+            ['factura', '💰 Contabilidad'],
+            ['docsComercial', '📋 Comercial'],
+            ['certLab', '🔬 Laboratorio'],
+          ].map(([k, l]) => (
+            <button
+              key={k}
+              className={vistaGerencia === k ? 'btn' : 'btn btn-secondary'}
+              style={{ fontSize: 12, padding: '5px 12px' }}
+              onClick={() => setVistaGerencia(k)}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      )}
 
       {overlay.activo && (
         <div style={{ marginBottom: 14 }}>
