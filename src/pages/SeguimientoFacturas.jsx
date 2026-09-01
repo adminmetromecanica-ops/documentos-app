@@ -144,12 +144,12 @@ function calcularResumenAnual(cobranzas) {
 
 function KpiCard({ label, value, sub, color, compacta }) {
   return (
-    <div className="card" style={{ flex: 1, minWidth: compacta ? 130 : 150, padding: compacta ? '10px 14px' : undefined }}>
-      <div style={{ fontSize: compacta ? 9 : 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: compacta ? 3 : 6 }}>
+    <div className="card" style={{ flex: 1, minWidth: compacta ? 145 : 160, padding: compacta ? '11px 15px' : undefined }}>
+      <div style={{ fontSize: compacta ? 10.5 : 11.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: compacta ? 4 : 6 }}>
         {label}
       </div>
-      <div style={{ fontSize: compacta ? 18 : 24, fontWeight: 800, color: color || 'var(--ocean-accent)', lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: compacta ? 10 : 11, color: 'var(--text-muted)', marginTop: compacta ? 2 : 4 }}>{sub}</div>}
+      <div style={{ fontSize: compacta ? 21 : 26, fontWeight: 800, color: color || 'var(--ocean-accent)', lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: compacta ? 11.5 : 12.5, color: 'var(--text-muted)', marginTop: compacta ? 3 : 4 }}>{sub}</div>}
     </div>
   )
 }
@@ -1001,8 +1001,8 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                   value={mes}
                   onChange={(e) => setMes(e.target.value)}
                   style={{
-                    fontSize: 20, fontWeight: 800, padding: '10px 14px', width: 220, minWidth: 220,
-                    flexShrink: 0, textAlign: 'center', borderRadius: 10,
+                    fontSize: 19, fontWeight: 800, padding: '10px 12px 10px 16px', width: 280, minWidth: 280,
+                    flexShrink: 0, textAlign: 'left', borderRadius: 10,
                     border: '3px solid var(--ocean-accent)', color: '#241d13',
                   }}
                 />
@@ -1019,7 +1019,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                 </button>
               </div>
             </div>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 10px' }}>
               Facturado, IGV y Detracción se calculan por fecha de <b>emisión</b> · Cobrado se calcula por fecha de <b>cobro</b> — pueden caer en meses distintos.
             </p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -1044,7 +1044,7 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
                 <button
                   key={k}
                   className={filtroEstado === k ? 'btn' : 'btn btn-secondary'}
-                  style={{ fontSize: 12, padding: '6px 12px' }}
+                  style={{ fontSize: 13.5, fontWeight: 600, padding: '8px 14px' }}
                   onClick={() => setFiltroEstado(k)}
                 >
                   {l}
@@ -1068,14 +1068,14 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
               <p style={{ padding: 16, color: 'var(--text-muted)' }}>No hay facturas que coincidan con el filtro.</p>
             ) : (
               <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '65vh' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                   <thead>
                     <tr>
                       {['OT', 'Cliente', 'N° Factura', 'Emisión', 'Vencimiento', 'Condición', 'Monto', 'IGV', 'Detracción', 'Monto a cobrar', 'Estado', 'Recordar'].map((h) => (
                         <th
                           key={h}
                           style={{
-                            padding: '10px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
+                            padding: '10px 10px', textAlign: 'left', fontSize: 11, textTransform: 'uppercase',
                             letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '2px solid var(--border)',
                             whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 2,
                             background: 'rgba(255, 250, 240, 0.98)',
@@ -1175,14 +1175,14 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
               <p style={{ padding: 16, color: 'var(--text-muted)' }}>Todas las OTs tienen factura registrada. 🎉</p>
             ) : (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                   <thead>
                     <tr>
                       {['OT', 'Cliente', 'RUC', 'Estado', 'Fecha Entrega', ''].map((h) => (
                         <th
                           key={h}
                           style={{
-                            padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase',
+                            padding: '10px 10px', textAlign: 'left', fontSize: 11, textTransform: 'uppercase',
                             letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)',
                             whiteSpace: 'nowrap',
                           }}
@@ -1254,11 +1254,11 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
 
           <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 24 }}>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                 <thead>
                   <tr>
                     {['Mes', 'Facturas', 'Monto Total', 'Base Imponible', 'IGV', 'Detracción', 'Neto', 'Cobrado', 'Saldo'].map((h) => (
-                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                      <th key={h} style={{ padding: '10px 10px', textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                         {h}
                       </th>
                     ))}
@@ -1298,11 +1298,11 @@ export default function SeguimientoFacturas({ profile, onLogout }) {
               <p style={{ padding: 16, color: 'var(--text-muted)' }}>Aún no hay facturas registradas.</p>
             ) : (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                   <thead>
                     <tr>
                       {['Año', 'Facturas', 'Monto Total', 'Base Imponible', 'IGV', 'Detracción', 'Neto', 'Cobrado', 'Saldo'].map((h) => (
-                        <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
+                        <th key={h} style={{ padding: '10px 10px', textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                           {h}
                         </th>
                       ))}
