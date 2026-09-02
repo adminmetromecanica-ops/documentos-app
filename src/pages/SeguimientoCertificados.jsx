@@ -200,28 +200,12 @@ function Badge({ estado }) {
 
 // ── Modal de recordatorio — mismo patrón que Seguimiento de Facturas ────
 function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
-  const { ot, correo, mensaje, cargandoDocs, documentos } = datos
+  const { ot, correo, mensaje, cargandoDocs, documentos, enlaceVistaPrevia } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
-  const [cargandoVistaPrevia, setCargandoVistaPrevia] = useState(false)
-  const [urlVistaPrevia, setUrlVistaPrevia] = useState(null)
   const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
-  }
-
-  // La vista previa REEMPLAZA el contenido del mismo marco (no una capa
-  // encima) — así solo hay un botón "cerrar" en todo momento, sin
-  // ambigüedad sobre cuál cierra qué.
-  async function abrirVistaPrevia() {
-    setCargandoVistaPrevia(true)
-    const token = await obtenerOCrearTokenCompartido(ot.ot_number)
-    setCargandoVistaPrevia(false)
-    if (!token) {
-      alert('No se pudo generar el enlace de vista previa.')
-      return
-    }
-    setUrlVistaPrevia(construirLinkPaginaPublica(ot.ot_number, token))
   }
 
   return (
@@ -232,99 +216,92 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
       <div
         onClick={(e) => e.stopPropagation()}
         className="card"
-        style={{ width: '100%', maxWidth: urlVistaPrevia ? 920 : 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
+        style={{ width: '100%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
       >
-        {urlVistaPrevia ? (
-          <>
-            <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <strong style={{ fontSize: 16 }}>🔎 Vista previa — lo que verá el cliente</strong>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => setUrlVistaPrevia(null)}>← Volver a redactar</button>
-                <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
-              </div>
+        <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
+          <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+        </div>
+
+        <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
+              <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
             </div>
-            <iframe src={urlVistaPrevia} title="Vista previa del cliente" style={{ flex: 1, width: '100%', border: 'none', minHeight: 500 }} />
-          </>
-        ) : (
-          <>
-            <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
-              <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
+              <select value={remitente} onChange={(e) => setRemitente(e.target.value)} style={{ width: '100%' }}>
+                {CUENTAS_REMITENTE.map((c) => (
+                  <option key={c.valor} value={c.valor}>{c.etiqueta}</option>
+                ))}
+              </select>
             </div>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-10px 0 0' }}>
+            Solo funciona si esa cuenta ya está logueada en tu navegador — si no, Gmail abrirá con la que sí lo esté.
+          </p>
 
-            <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
-                  <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
-                  <select value={remitente} onChange={(e) => setRemitente(e.target.value)} style={{ width: '100%' }}>
-                    {CUENTAS_REMITENTE.map((c) => (
-                      <option key={c.valor} value={c.valor}>{c.etiqueta}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-10px 0 0' }}>
-                Solo funciona si esa cuenta ya está logueada en tu navegador — si no, Gmail abrirá con la que sí lo esté.
-              </p>
+          <div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
+            <textarea
+              value={mensaje}
+              onChange={(e) => onCambiarMensaje(e.target.value)}
+              rows={12}
+              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
+            />
+          </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
-                <textarea
-                  value={mensaje}
-                  onChange={(e) => onCambiarMensaje(e.target.value)}
-                  rows={12}
-                  style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
-                />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
-                  <button
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
+              {/* Mismo patrón que "Abrir en Gmail" — un <a target="_blank"> real,
+                  no window.open() — es el que ya sabemos que funciona sin
+                  afectar el resto de la pantalla al cerrarlo. */}
+              {enlaceVistaPrevia ? (
+                <a
+                  href={enlaceVistaPrevia}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}
+                  title="Abre en una pestaña nueva la misma página que vería el cliente"
+                >
+                  🔎 Vista previa (página del cliente)
+                </a>
+              ) : (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>⏳ Generando vista previa...</span>
+              )}
+            </div>
+            {cargandoDocs ? (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
+            ) : !documentos || documentos.length === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aún no hay certificados ni trazabilidades subidas para esta OT.</span>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {documentos.map((doc) => (
+                  <a
+                    key={doc.id}
+                    href={doc.url}
+                    target="_blank"
+                    rel="noreferrer"
                     className="btn btn-secondary"
-                    style={{ fontSize: 11, padding: '4px 10px' }}
-                    disabled={cargandoVistaPrevia}
-                    onClick={abrirVistaPrevia}
-                    title="Abre la misma página que vería el cliente, sin importar cuántos documentos tenga"
+                    style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block' }}
                   >
-                    {cargandoVistaPrevia ? '⏳...' : '🔎 Vista previa (página del cliente)'}
-                  </button>
-                </div>
-                {cargandoDocs ? (
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
-                ) : !documentos || documentos.length === 0 ? (
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aún no hay certificados ni trazabilidades subidas para esta OT.</span>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {documentos.map((doc) => (
-                      <a
-                        key={doc.id}
-                        href={doc.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn btn-secondary"
-                        style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block' }}
-                      >
-                        👁 Ver {doc.tipo} — {doc.nombre}
-                      </a>
-                    ))}
-                  </div>
-                )}
+                    👁 Ver {doc.tipo} — {doc.nombre}
+                  </a>
+                ))}
               </div>
-            </div>
+            )}
+          </div>
+        </div>
 
-            <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-              <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${remitente}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-                📧 Abrir en Gmail para enviar
-              </a>
-            </div>
-          </>
-        )}
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
+          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${remitente}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+            📧 Abrir en Gmail para enviar
+          </a>
+        </div>
       </div>
     </div>
   )
@@ -547,19 +524,29 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
+    // Enlace de vista previa: se genera de una vez al abrir el modal (no
+    // al hacer clic) para que el botón sea un <a target="_blank"> normal
+    // — igual que el de Gmail, que ya sabemos que funciona bien — en vez
+    // de un window.open() disparado después de un await, que en algunos
+    // navegadores/contextos se comporta de forma menos predecible.
+    let enlaceVistaPrevia = null
     let mensaje = mensajeBase
     if (documentos.length > UMBRAL_ENLACE_UNICO) {
       const token = await obtenerOCrearTokenCompartido(fila.ot_number)
       if (token) {
-        const enlaceUnico = `${URL_APP_PUBLICA}/compartir/${encodeURIComponent(fila.ot_number)}?token=${token}`
-        mensaje = `${mensajeBase}\n\nPuede ver y descargar todos los documentos (${documentos.length}) desde este enlace:\n${enlaceUnico}`
+        enlaceVistaPrevia = construirLinkPaginaPublica(fila.ot_number, token)
+        mensaje = `${mensajeBase}\n\nPuede ver y descargar todos los documentos (${documentos.length}) desde este enlace:\n${enlaceVistaPrevia}`
       }
     } else if (documentos.length > 0) {
       const lineasDocs = documentos.map((d) => `${d.tipo}: ${d.url}`)
       mensaje = `${mensajeBase}\n\nDocumentos:\n${lineasDocs.join('\n')}`
     }
+    if (!enlaceVistaPrevia) {
+      const token = await obtenerOCrearTokenCompartido(fila.ot_number)
+      if (token) enlaceVistaPrevia = construirLinkPaginaPublica(fila.ot_number, token)
+    }
 
-    setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos })
+    setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos, enlaceVistaPrevia })
   }
 
   if (!acceso) {
