@@ -218,7 +218,6 @@ function CompartirDocumentosOTInterno() {
   const certificados = grupos['certificado'] || []
   const trazabilidades = grupos['trazabilidad'] || []
   const proformaYOC = Object.entries(grupos).filter(([k]) => k === 'proforma' || k === 'orden de compra' || k === 'cotización')
-  const otrosGrupos = Object.entries(grupos).filter(([k]) => !['certificado', 'trazabilidad', 'proforma', 'orden de compra', 'cotización'].includes(k))
 
   function irA(id) {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -335,13 +334,11 @@ function CompartirDocumentosOTInterno() {
               ))}
             </div>
 
-            {/* ── Listas detalladas ── */}
+            {/* ── Listas detalladas — solo Certificados y Trazabilidad, igual
+                 a la imagen de referencia. Proforma/OC/Acta y cualquier otro
+                 tipo de documento NO se muestran aquí (esta página es
+                 específicamente para certificados y trazabilidad). ── */}
             <div id="lista-documentos">
-              {proformaYOC.map(([tipo, docs]) => (
-                <div key={tipo} style={{ marginBottom: 20 }}>
-                  <CarpetaDocumentos tipo={tipo} docs={docs} onVerDocumento={setDocAbierto} />
-                </div>
-              ))}
               {certificados.length > 0 && (
                 <div id="certificados-lista" style={{ marginBottom: 20 }}>
                   <CarpetaDocumentos tipo="certificado" docs={certificados} onVerDocumento={setDocAbierto} />
@@ -352,9 +349,6 @@ function CompartirDocumentosOTInterno() {
                   <CarpetaDocumentos tipo="trazabilidad" docs={trazabilidades} onVerDocumento={setDocAbierto} />
                 </div>
               )}
-              {otrosGrupos.map(([tipo, docs]) => (
-                <CarpetaDocumentos key={tipo} tipo={tipo} docs={docs} onVerDocumento={setDocAbierto} />
-              ))}
             </div>
 
             <p style={{ textAlign: 'center', fontSize: 11, color: '#94a3b8', marginTop: 20 }}>
