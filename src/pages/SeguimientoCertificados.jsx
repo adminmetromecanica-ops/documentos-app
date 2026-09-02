@@ -376,18 +376,44 @@ function FondoToroAnimado() {
   )
 }
 
+// ── Filtros persistidos en sessionStorage ────────────────────────────────
+// Sin esto, cualquier navegación fuera de esta pantalla (clic en una OT,
+// volver al Portal y reabrir la herramienta) resetea los filtros — muy
+// molesto cuando ya tenías armado un rango de fechas específico. Con
+// sessionStorage sobreviven mientras la pestaña del navegador siga
+// abierta, sin importar por dónde navegues y vuelvas.
+const CLAVE_FILTROS = 'certificados_filtros'
+
+function leerFiltrosGuardados() {
+  try {
+    return JSON.parse(sessionStorage.getItem(CLAVE_FILTROS)) || {}
+  } catch {
+    return {}
+  }
+}
+
 export default function SeguimientoCertificados({ profile, onLogout }) {
   const navigate = useNavigate()
   const [servicios, setServicios] = useState([])
   const [documentos, setDocumentos] = useState([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('seguimiento') // 'seguimiento' | 'sin_documentos'
-  const [busqueda, setBusqueda] = useState('')
-  const [fechaDesde, setFechaDesde] = useState('')
-  const [fechaHasta, setFechaHasta] = useState('')
+  const filtrosGuardados = leerFiltrosGuardados()
+  const [tab, setTab] = useState(filtrosGuardados.tab || 'seguimiento') // 'seguimiento' | 'sin_documentos'
+  const [busqueda, setBusqueda] = useState(filtrosGuardados.busqueda || '')
+  const [fechaDesde, setFechaDesde] = useState(filtrosGuardados.fechaDesde || '')
+  const [fechaHasta, setFechaHasta] = useState(filtrosGuardados.fechaHasta || '')
   const [modalRecordatorio, setModalRecordatorio] = useState(null)
-  const [mesSeleccionado, setMesSeleccionado] = useState('')
-  const [anioSeleccionado, setAnioSeleccionado] = useState('')
+  const [mesSeleccionado, setMesSeleccionado] = useState(filtrosGuardados.mesSeleccionado || '')
+  const [anioSeleccionado, setAnioSeleccionado] = useState(filtrosGuardados.anioSeleccionado || '')
+
+  // Cada vez que cambia cualquier filtro, se guarda de inmediato — así la
+  // próxima vez que se entre a esta pantalla (aunque el componente se haya
+  // desmontado por completo) arranca igual a como se dejó.
+  useEffect(() => {
+    sessionStorage.setItem(CLAVE_FILTROS, JSON.stringify({
+      tab, busqueda, fechaDesde, fechaHasta, mesSeleccionado, anioSeleccionado,
+    }))
+  }, [tab, busqueda, fechaDesde, fechaHasta, mesSeleccionado, anioSeleccionado])
 
   // Atajo: elegir mes + año rellena "Desde"/"Hasta" automáticamente con el
   // primer y último día de ese mes — reemplaza el <input type="month">
