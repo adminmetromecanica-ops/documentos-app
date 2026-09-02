@@ -210,12 +210,9 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
     navigator.clipboard.writeText(mensaje)
   }
 
-  // ── Vista previa DENTRO de la misma pantalla, sin abrir ventana nueva ──
-  // window.open() se comportaba mal en la app instalada (PWA): cerrar esa
-  // "ventana" cerraba también la OT seleccionada, porque el navegador la
-  // trataba como la misma ventana en vez de una pestaña aparte. Con un
-  // iframe en un overlay propio, "cerrar" es solo ocultar este overlay —
-  // nunca puede tocar nada del resto de la pantalla.
+  // La vista previa REEMPLAZA el contenido del mismo marco (no una capa
+  // encima) — así solo hay un botón "cerrar" en todo momento, sin
+  // ambigüedad sobre cuál cierra qué.
   async function abrirVistaPrevia() {
     setCargandoVistaPrevia(true)
     const token = await obtenerOCrearTokenCompartido(ot.ot_number)
@@ -229,102 +226,105 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
 
   return (
     <div
-      onClick={() => { if (!urlVistaPrevia) onClose() }}
+      onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
     >
-      {urlVistaPrevia && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{ position: 'fixed', inset: 0, background: '#fff', zIndex: 1100, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-        >
-          <div style={{ padding: '10px 16px', background: '#16232b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-            <strong style={{ color: '#fff', fontSize: 13 }}>🔎 Vista previa — lo que verá el cliente</strong>
-            <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => setUrlVistaPrevia(null)}>✕ Cerrar vista previa</button>
-          </div>
-          <iframe src={urlVistaPrevia} title="Vista previa del cliente" style={{ flex: 1, width: '100%', border: 'none' }} />
-        </div>
-      )}
       <div
         onClick={(e) => e.stopPropagation()}
         className="card"
-        style={{ width: '100%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
+        style={{ width: '100%', maxWidth: urlVistaPrevia ? 920 : 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
       >
-        <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
-          <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
-        </div>
-
-        <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
-              <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
-              <select value={remitente} onChange={(e) => setRemitente(e.target.value)} style={{ width: '100%' }}>
-                {CUENTAS_REMITENTE.map((c) => (
-                  <option key={c.valor} value={c.valor}>{c.etiqueta}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-10px 0 0' }}>
-            Solo funciona si esa cuenta ya está logueada en tu navegador — si no, Gmail abrirá con la que sí lo esté.
-          </p>
-
-          <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
-            <textarea
-              value={mensaje}
-              onChange={(e) => onCambiarMensaje(e.target.value)}
-              rows={12}
-              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
-            />
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
-              <button
-                className="btn btn-secondary"
-                style={{ fontSize: 11, padding: '4px 10px' }}
-                disabled={cargandoVistaPrevia}
-                onClick={abrirVistaPrevia}
-                title="Abre la misma página que vería el cliente, sin importar cuántos documentos tenga"
-              >
-                {cargandoVistaPrevia ? '⏳...' : '🔎 Vista previa (página del cliente)'}
-              </button>
-            </div>
-            {cargandoDocs ? (
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
-            ) : !documentos || documentos.length === 0 ? (
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aún no hay certificados ni trazabilidades subidas para esta OT.</span>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {documentos.map((doc) => (
-                  <a
-                    key={doc.id}
-                    href={doc.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn btn-secondary"
-                    style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block' }}
-                  >
-                    👁 Ver {doc.tipo} — {doc.nombre}
-                  </a>
-                ))}
+        {urlVistaPrevia ? (
+          <>
+            <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <strong style={{ fontSize: 16 }}>🔎 Vista previa — lo que verá el cliente</strong>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => setUrlVistaPrevia(null)}>← Volver a redactar</button>
+                <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+            <iframe src={urlVistaPrevia} title="Vista previa del cliente" style={{ flex: 1, width: '100%', border: 'none', minHeight: 500 }} />
+          </>
+        ) : (
+          <>
+            <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
+              <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+            </div>
 
-        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${remitente}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-            📧 Abrir en Gmail para enviar
-          </a>
-        </div>
+            <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
+                  <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
+                  <select value={remitente} onChange={(e) => setRemitente(e.target.value)} style={{ width: '100%' }}>
+                    {CUENTAS_REMITENTE.map((c) => (
+                      <option key={c.valor} value={c.valor}>{c.etiqueta}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-10px 0 0' }}>
+                Solo funciona si esa cuenta ya está logueada en tu navegador — si no, Gmail abrirá con la que sí lo esté.
+              </p>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
+                <textarea
+                  value={mensaje}
+                  onChange={(e) => onCambiarMensaje(e.target.value)}
+                  rows={12}
+                  style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: 11, padding: '4px 10px' }}
+                    disabled={cargandoVistaPrevia}
+                    onClick={abrirVistaPrevia}
+                    title="Abre la misma página que vería el cliente, sin importar cuántos documentos tenga"
+                  >
+                    {cargandoVistaPrevia ? '⏳...' : '🔎 Vista previa (página del cliente)'}
+                  </button>
+                </div>
+                {cargandoDocs ? (
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
+                ) : !documentos || documentos.length === 0 ? (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aún no hay certificados ni trazabilidades subidas para esta OT.</span>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {documentos.map((doc) => (
+                      <a
+                        key={doc.id}
+                        href={doc.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-secondary"
+                        style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block' }}
+                      >
+                        👁 Ver {doc.tipo} — {doc.nombre}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
+              <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${remitente}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+                📧 Abrir en Gmail para enviar
+              </a>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
