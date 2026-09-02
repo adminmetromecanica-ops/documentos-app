@@ -206,7 +206,7 @@ function Badge({ estado }) {
 function ModalRecordatorio({ datos, onClose, onCambiarMensaje, onRegistrarEnvio }) {
   const { ot, correo, mensaje, cargandoDocs, documentos } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
-  const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
+  const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — ${ot.ot_number}`, mensaje, remitente)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
@@ -235,9 +235,13 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje, onRegistrarEnvio 
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
-              <select value={remitente} onChange={(e) => setRemitente(e.target.value)} style={{ width: '100%' }}>
+              <select
+                value={remitente}
+                onChange={(e) => setRemitente(e.target.value)}
+                style={{ width: '100%', color: '#16232b', background: '#fff', fontWeight: 700 }}
+              >
                 {CUENTAS_REMITENTE.map((c) => (
-                  <option key={c.valor} value={c.valor}>{c.etiqueta}</option>
+                  <option key={c.valor} value={c.valor} style={{ color: '#16232b' }}>{c.etiqueta}</option>
                 ))}
               </select>
             </div>
@@ -523,11 +527,11 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       })
   }, [filas, tab, busqueda, fechaDesde, fechaHasta])
 
-  // ── Simple y confiable: enlaces individuales organizados en 2 carpetas
-  // (Certificados / Trazabilidad) directo en el mensaje. Nada de token, ni
-  // página pública, ni ventana nueva — solo los mismos enlaces que ya
-  // funcionan bien en el botón "👁 Ver" de más abajo. Aparece de inmediato,
-  // sin esperar ninguna consulta de red.
+  // ── Siempre la página pública, sin importar cuántos documentos haya ────
+  // El modal aparece de inmediato con lo que ya se tiene; el enlace se
+  // agrega al mensaje apenas está listo, en segundo plano, sin bloquear
+  // nada. Nadie de MetroMecánica necesita abrir ese enlace para probarlo —
+  // lo abre el cliente en su propio navegador.
   function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
@@ -539,25 +543,19 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
-    const seccionesDocs = []
-    if (fila.docsCertificados.length > 0) {
-      seccionesDocs.push(
-        `📜 CERTIFICADOS (${fila.docsCertificados.length}):`,
-        ...fila.docsCertificados.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
-      )
-    }
-    if (fila.docsTrazabilidades.length > 0) {
-      if (seccionesDocs.length > 0) seccionesDocs.push('')
-      seccionesDocs.push(
-        `🔗 TRAZABILIDAD (${fila.docsTrazabilidades.length}):`,
-        ...fila.docsTrazabilidades.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
-      )
-    }
-    const mensaje = seccionesDocs.length > 0
-      ? `${mensajeBase}\n\n${seccionesDocs.join('\n')}`
-      : mensajeBase
+    setModalRecordatorio({ ot: fila, correo, mensaje: mensajeBase, cargandoDocs: false, documentos })
 
-    setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos })
+    obtenerOCrearTokenCompartido(fila.ot_number).then((token) => {
+      setModalRecordatorio((prev) => {
+        if (!prev || prev.ot.ot_number !== fila.ot_number) return prev
+        if (!token) return prev
+        const enlace = construirLinkPaginaPublica(fila.ot_number, token)
+        const mensaje = documentos.length > 0
+          ? `${mensajeBase}\n\nPuede ver y descargar ${documentos.length === 1 ? 'el documento' : `los ${documentos.length} documentos`} (organizados por carpeta) desde este enlace:\n${enlace}`
+          : mensajeBase
+        return { ...prev, mensaje }
+      })
+    })
   }
 
   if (!acceso) {
