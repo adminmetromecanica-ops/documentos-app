@@ -204,7 +204,7 @@ function Badge({ estado }) {
 
 // ── Modal de recordatorio — mismo patrón que Seguimiento de Facturas ────
 function ModalRecordatorio({ datos, onClose, onCambiarMensaje, onRegistrarEnvio }) {
-  const { ot, correo, mensaje, cargandoDocs, documentos, enlaceVistaPrevia, errorVistaPrevia } = datos
+  const { ot, correo, mensaje, cargandoDocs, documentos } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
   const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
 
@@ -257,42 +257,13 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje, onRegistrarEnvio 
           </div>
 
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
-              {enlaceVistaPrevia ? (
-                <button
-                  className="btn btn-secondary"
-                  style={{ fontSize: 11, padding: '4px 10px' }}
-                  onClick={() => {
-                    // Ventana emergente FORZADA: al incluir width/height en
-                    // los features, Chrome siempre crea una ventana nueva
-                    // de verdad — incluso lanzado desde modo aplicación
-                    // (sin pestañas), a diferencia de target="_blank" o un
-                    // window.open() sin features, que en ese modo puede
-                    // navegar la única ventana existente en vez de abrir
-                    // una aparte.
-                    window.open(
-                      enlaceVistaPrevia,
-                      `vistaPrevia_${ot.ot_number}`,
-                      'width=900,height=750,noopener,resizable=yes,scrollbars=yes'
-                    )
-                  }}
-                  title="Abre en una ventana nueva lo que vería el cliente"
-                >
-                  🔎 Vista previa (página del cliente)
-                </button>
-              ) : errorVistaPrevia ? (
-                <span style={{ fontSize: 11, color: '#c0392b' }}>⚠ No se pudo generar la vista previa (revisa la tabla enlaces_compartidos)</span>
-              ) : (
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>⏳ Generando vista previa...</span>
-              )}
-            </div>
+            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos (ya incluidos arriba, organizados por carpeta)</label>
             {cargandoDocs ? (
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
             ) : !documentos || documentos.length === 0 ? (
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aún no hay certificados ni trazabilidades subidas para esta OT.</span>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
                 {documentos.map((doc) => (
                   <a
                     key={doc.id}
@@ -552,13 +523,11 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       })
   }, [filas, tab, busqueda, fechaDesde, fechaHasta])
 
-  // ── Siempre usa la plataforma propia (la página con el logo y las
-  // carpetas de Certificados/Trazabilidad) — sin importar si hay 1 o 20
-  // documentos. Antes, con pocos documentos, se mandaban enlaces sueltos
-  // en el correo en vez de la página con marca — ahora es consistente
-  // siempre. El modal se abre de inmediato con lo que ya se tiene (sin
-  // esperar ninguna consulta a Supabase); el enlace se agrega al mensaje
-  // apenas está listo, en segundo plano.
+  // ── Simple y confiable: enlaces individuales organizados en 2 carpetas
+  // (Certificados / Trazabilidad) directo en el mensaje. Nada de token, ni
+  // página pública, ni ventana nueva — solo los mismos enlaces que ya
+  // funcionan bien en el botón "👁 Ver" de más abajo. Aparece de inmediato,
+  // sin esperar ninguna consulta de red.
   function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
@@ -570,24 +539,25 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
-    // Aparece YA, sin esperar nada de red.
-    setModalRecordatorio({
-      ot: fila, correo, mensaje: mensajeBase, cargandoDocs: false, documentos,
-      enlaceVistaPrevia: null, errorVistaPrevia: false,
-    })
+    const seccionesDocs = []
+    if (fila.docsCertificados.length > 0) {
+      seccionesDocs.push(
+        `📜 CERTIFICADOS (${fila.docsCertificados.length}):`,
+        ...fila.docsCertificados.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
+      )
+    }
+    if (fila.docsTrazabilidades.length > 0) {
+      if (seccionesDocs.length > 0) seccionesDocs.push('')
+      seccionesDocs.push(
+        `🔗 TRAZABILIDAD (${fila.docsTrazabilidades.length}):`,
+        ...fila.docsTrazabilidades.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
+      )
+    }
+    const mensaje = seccionesDocs.length > 0
+      ? `${mensajeBase}\n\n${seccionesDocs.join('\n')}`
+      : mensajeBase
 
-    // El token para la página pública se genera aparte, sin bloquear nada.
-    obtenerOCrearTokenCompartido(fila.ot_number).then((token) => {
-      setModalRecordatorio((prev) => {
-        if (!prev || prev.ot.ot_number !== fila.ot_number) return prev // el modal ya cambió de OT o se cerró
-        if (!token) return { ...prev, errorVistaPrevia: true }
-        const enlace = construirLinkPaginaPublica(fila.ot_number, token)
-        const mensajeConEnlace = documentos.length > 0
-          ? `${mensajeBase}\n\nPuede ver y descargar ${documentos.length === 1 ? 'el documento' : `los ${documentos.length} documentos`} desde este enlace:\n${enlace}`
-          : mensajeBase
-        return { ...prev, enlaceVistaPrevia: enlace, mensaje: mensajeConEnlace }
-      })
-    })
+    setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos })
   }
 
   if (!acceso) {
