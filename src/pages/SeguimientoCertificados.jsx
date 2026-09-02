@@ -203,15 +203,19 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
   const { ot, correo, mensaje, cargandoDocs, documentos } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
   const [cargandoVistaPrevia, setCargandoVistaPrevia] = useState(false)
+  const [urlVistaPrevia, setUrlVistaPrevia] = useState(null)
   const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
   }
 
-  // Siempre disponible, sin importar cuántos documentos tenga la OT — para
-  // poder ver/probar la página del cliente en cualquier momento, no solo
-  // cuando se supera el umbral de envío automático por enlace único.
+  // ── Vista previa DENTRO de la misma pantalla, sin abrir ventana nueva ──
+  // window.open() se comportaba mal en la app instalada (PWA): cerrar esa
+  // "ventana" cerraba también la OT seleccionada, porque el navegador la
+  // trataba como la misma ventana en vez de una pestaña aparte. Con un
+  // iframe en un overlay propio, "cerrar" es solo ocultar este overlay —
+  // nunca puede tocar nada del resto de la pantalla.
   async function abrirVistaPrevia() {
     setCargandoVistaPrevia(true)
     const token = await obtenerOCrearTokenCompartido(ot.ot_number)
@@ -220,7 +224,7 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
       alert('No se pudo generar el enlace de vista previa.')
       return
     }
-    window.open(construirLinkPaginaPublica(ot.ot_number, token), '_blank', 'noopener,noreferrer')
+    setUrlVistaPrevia(construirLinkPaginaPublica(ot.ot_number, token))
   }
 
   return (
@@ -228,6 +232,18 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
     >
+      {urlVistaPrevia && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: 'fixed', inset: 20, background: '#fff', borderRadius: 12, zIndex: 1100, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }}
+        >
+          <div style={{ padding: '10px 16px', background: '#16232b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+            <strong style={{ color: '#fff', fontSize: 13 }}>🔎 Vista previa — lo que verá el cliente</strong>
+            <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => setUrlVistaPrevia(null)}>✕ Cerrar vista previa</button>
+          </div>
+          <iframe src={urlVistaPrevia} title="Vista previa del cliente" style={{ flex: 1, width: '100%', border: 'none' }} />
+        </div>
+      )}
       <div
         onClick={(e) => e.stopPropagation()}
         className="card"
