@@ -141,32 +141,23 @@ function tieneValorReal(valor) {
   return valor && !VALORES_SIN_DATO.includes(valor.trim().toLowerCase())
 }
 
-function armarMensajeRecordatorio(fila) {
-  const { ot_number, client, due_date, equipos, certificados, trazabilidades, ingresos } = fila
-
-  const listaEquipos = (Array.isArray(ingresos) ? ingresos : [])
-    .map((eq, i) => {
-      const detalles = [
-        tieneValorReal(eq.marca) ? eq.marca.trim() : null,
-        tieneValorReal(eq.modelo) ? eq.modelo.trim() : null,
-      ].filter(Boolean).join(' ')
-      const descripcion = eq.descripcion || 'Equipo sin descripción'
-      return detalles ? `${i + 1}. ${descripcion} — ${detalles}` : `${i + 1}. ${descripcion}`
-    })
-    .join('\n')
-
+// ── Mensaje corto, estilo "certificado digital" — un saludo, contexto breve
+// y UN enlace destacado. Se quitó el resumen detallado y la lista de
+// equipos (quedaban muy largos); esa información ya la ve el cliente
+// dentro de la página con las carpetas de Certificados/Trazabilidad.
+// `enlace` es null mientras se genera — en ese caso muestra un texto de
+// espera en su lugar.
+function armarMensajeRecordatorio(fila, enlace) {
+  const { ot_number, client } = fila
   return [
-    `Estimados ${client || 'señores'},`,
+    `Estimado(a) ${client || 'Cliente'},`,
     '',
-    `Adjuntamos los certificados de calibración y registros de trazabilidad correspondientes a la orden de trabajo ${ot_number}${due_date ? ` (fecha de entrega: ${fmtFecha(due_date)})` : ''}.`,
+    `Adjuntamos los certificados de calibración y documentos de trazabilidad correspondientes a los servicios realizados (Orden de Trabajo ${ot_number}).`,
     '',
-    'Resumen:',
-    `• Equipos calibrados: ${equipos}`,
-    `• Certificados de calibración: ${certificados} de ${equipos}`,
-    `• Registros de trazabilidad: ${trazabilidades} de ${equipos}`,
+    'Acceda de manera rápida y segura a toda la documentación desde el siguiente enlace:',
+    enlace ? `🔵 Acceder a mis documentos: ${enlace}` : '⏳ Generando enlace...',
     '',
-    ...(listaEquipos ? ['Equipos incluidos en esta orden:', listaEquipos, ''] : []),
-    'Ante cualquier consulta sobre el detalle técnico de los certificados, no dude en escribirnos.',
+    'Ante cualquier consulta, no dude en escribirnos.',
     '',
     'Saludos cordiales,',
     'Laboratorio de Calibración',
@@ -538,22 +529,18 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       alert('Esta OT no tiene un correo de contacto registrado en MetroTrack (pestaña Datos).')
       return
     }
-    const mensajeBase = armarMensajeRecordatorio(fila)
     const documentos = [...fila.docsCertificados, ...fila.docsTrazabilidades].map((d) => ({
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
-    setModalRecordatorio({ ot: fila, correo, mensaje: mensajeBase, cargandoDocs: false, documentos })
+    setModalRecordatorio({ ot: fila, correo, mensaje: armarMensajeRecordatorio(fila, null), cargandoDocs: false, documentos })
 
     obtenerOCrearTokenCompartido(fila.ot_number).then((token) => {
       setModalRecordatorio((prev) => {
         if (!prev || prev.ot.ot_number !== fila.ot_number) return prev
         if (!token) return prev
         const enlace = construirLinkPaginaPublica(fila.ot_number, token)
-        const mensaje = documentos.length > 0
-          ? `${mensajeBase}\n\nPuede ver y descargar ${documentos.length === 1 ? 'el documento' : `los ${documentos.length} documentos`} (organizados por carpeta) desde este enlace:\n${enlace}`
-          : mensajeBase
-        return { ...prev, mensaje }
+        return { ...prev, mensaje: armarMensajeRecordatorio(fila, enlace) }
       })
     })
   }

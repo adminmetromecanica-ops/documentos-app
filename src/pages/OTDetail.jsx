@@ -7,6 +7,18 @@ import UploadForm from '../components/UploadForm'
 const WEBHOOK_URL_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/url-documento"
 const WEBHOOK_URL_LEER_FACTURA = "https://panel.5-189-165-144.sslip.io/api-patrones/leer-factura-ia"
 const WEBHOOK_SUBIR_DOCUMENTO = "https://panel.5-189-165-144.sslip.io/api-patrones/subir-documento"
+// ── Enlace de visualización — versión robusta, sin llamada de red previa ──
+// Antes "👁 Ver" dependía de un POST a WEBHOOK_URL_DOCUMENTO que a veces no
+// devolvía la URL (fallaba en silencio para ciertos documentos, en
+// cualquier área). Este endpoint nuevo (GET, con redirección 302) no
+// necesita ningún fetch: el enlace se construye directo con la ruta que ya
+// tenemos, y el navegador sigue la redirección solo con ponerlo como src
+// del visor — igual que ya funciona en Certificados y en la página
+// pública para el cliente.
+const WEBHOOK_VER_DOCUMENTO_REDIRECT = "https://panel.5-189-165-144.sslip.io/api-patrones/ver-documento"
+function construirEnlaceDocumento(rutaMinio) {
+  return `${WEBHOOK_VER_DOCUMENTO_REDIRECT}?ruta=${encodeURIComponent(rutaMinio)}`
+}
 
 // Visibilidad cruzada de solo lectura (igual que las políticas de MinIO/RLS)
 const VISIBILIDAD_CRUZADA = {
@@ -1804,31 +1816,14 @@ export default function OTDetail({ profile }) {
     setEliminandoId(null)
   }
 
-  async function verDocumento(doc) {
+  function verDocumento(doc) {
     if (!doc.ruta_minio) {
       alert('Este documento no tiene una ruta válida en MinIO.')
       return
     }
-    setAbriendoId(doc.id)
-    try {
-      const resp = await fetch(WEBHOOK_URL_DOCUMENTO, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ruta_minio: doc.ruta_minio }),
-      })
-      const data = await resp.json()
-      if (data?.url) {
-        registrarAuditoria(profile.id, 'ver_documento', otNumber, doc.nombre_archivo)
-        const ext = (doc.nombre_archivo || '').split('.').pop().toLowerCase()
-        setVisor({ titulo: doc.nombre_archivo, url: data.url, extension: ext })
-      } else {
-        alert('No se pudo generar el enlace del documento. Intenta de nuevo.')
-      }
-    } catch (e) {
-      console.error('Error obteniendo URL del documento:', e)
-      alert('Error al abrir el documento. Revisa tu conexión e intenta de nuevo.')
-    }
-    setAbriendoId(null)
+    registrarAuditoria(profile.id, 'ver_documento', otNumber, doc.nombre_archivo)
+    const ext = (doc.nombre_archivo || '').split('.').pop().toLowerCase()
+    setVisor({ titulo: doc.nombre_archivo, url: construirEnlaceDocumento(doc.ruta_minio), extension: ext })
   }
 
   function verDocumentoOT() {
