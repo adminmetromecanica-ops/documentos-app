@@ -19,6 +19,24 @@ function formatFecha(fechaIso) {
   })
 }
 
+// ── Nombre de archivo seguro, PERO conservando el nombre real ────────────
+// Antes se descartaba el nombre que le ponía Laboratorio (con el código de
+// certificado, ej. "MLL-2026-0456_Torquimetro.pdf") y se reemplazaba por
+// uno inventado sin ningún significado. Ahora se conserva la parte
+// importante del nombre, solo sanitizando espacios y caracteres raros (los
+// espacios rompían la generación del enlace firmado de MinIO — el mismo
+// bug que ya corregimos una vez para las facturas), y se le agrega un
+// sufijo corto para que dos archivos con el mismo nombre nunca choquen.
+function nombreArchivoSeguro(nombreOriginal, prefijoTipo) {
+  const idx = nombreOriginal.lastIndexOf('.')
+  const base = idx > 0 ? nombreOriginal.slice(0, idx) : nombreOriginal
+  const ext = idx > 0 ? nombreOriginal.slice(idx + 1) : ''
+  const baseSegura = base.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '')
+  const sufijo = Math.random().toString(36).slice(2, 7)
+  const nombreFinal = baseSegura || prefijoTipo // si el nombre original queda vacío tras limpiar, usa el tipo
+  return ext ? `${nombreFinal}_${sufijo}.${ext}` : `${nombreFinal}_${sufijo}`
+}
+
 export default function UploadForm({ otNumber, area, tipos, userId, documentosExistentes = [], onUploaded }) {
   const [tipo, setTipo] = useState(tipos[0]?.value || '')
   const [files, setFiles] = useState([]) // { key, file, hash, checking, duplicado }
@@ -113,8 +131,7 @@ export default function UploadForm({ otNumber, area, tipos, userId, documentosEx
 
   async function uploadOne(item, tipoInfo) {
     const file = item.file
-    const extension = file.name.split('.').pop()
-    const nombreArchivo = `${tipo}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${extension}`
+    const nombreArchivo = nombreArchivoSeguro(file.name, tipo)
 
     const formData = new FormData()
     formData.append('file', file, nombreArchivo)
