@@ -37,11 +37,41 @@ function etiquetaDe(tipoDocumento) {
   return ETIQUETA_TIPO[key] || { icono: '📄', titulo: tipoDocumento || 'Otros documentos' }
 }
 
+// ── Visor de documento DENTRO de la misma página ─────────────────────────
+// En vez de navegar a otra pestaña (lo que saca al cliente de la página
+// con marca), se abre un visor superpuesto con el PDF adentro. El botón
+// "Descargar" (abajo) sigue siendo un enlace real, para quien prefiera
+// bajarlo directo.
+function VisorDocumento({ doc, onClose }) {
+  const url = construirEnlaceDocumento(doc.ruta_minio)
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,32,0.75)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: '#fff', borderRadius: 12, width: '100%', maxWidth: 900, height: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+      >
+        <div style={{ padding: '12px 18px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#16232b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.nombre_archivo}</span>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <a href={url} download={doc.nombre_archivo} style={{ fontSize: 12, fontWeight: 700, color: '#2f6fed', textDecoration: 'none' }}>⬇ Descargar</a>
+            <button onClick={onClose} style={{ border: 'none', background: 'transparent', fontSize: 13, fontWeight: 700, color: '#5c6d7a', cursor: 'pointer' }}>✕ Cerrar</button>
+          </div>
+        </div>
+        <iframe src={url} title={doc.nombre_archivo} style={{ flex: 1, width: '100%', border: 'none' }} />
+      </div>
+    </div>
+  )
+}
+
 // Carpeta colapsable por tipo de documento — mismo patrón visual que ya
 // usamos en "Documentos subidos" dentro de las OT (ícono + título + badge
-// contador redondo, se expande al hacer clic).
-function CarpetaDocumentos({ tipo, docs }) {
-  const [abierta, setAbierta] = useState(true)
+// contador redondo, se expande al hacer clic). Muchos documentos (>6) se
+// muestran colapsados por defecto para no obligar a scrollear de entrada.
+function CarpetaDocumentos({ tipo, docs, onVerDocumento }) {
+  const [abierta, setAbierta] = useState(docs.length <= 6)
   const etiqueta = etiquetaDe(tipo)
   return (
     <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden', marginBottom: 14 }}>
@@ -62,22 +92,20 @@ function CarpetaDocumentos({ tipo, docs }) {
         </span>
       </button>
       {abierta && (
-        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ padding: 14, display: 'grid', gridTemplateColumns: docs.length > 1 ? '1fr 1fr' : '1fr', gap: 8 }}>
           {docs.map((d, i) => (
-            <a
+            <button
               key={i}
-              href={construirEnlaceDocumento(d.ruta_minio)}
-              target="_blank"
-              rel="noreferrer"
+              onClick={() => onVerDocumento(d)}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '10px 14px', borderRadius: 8, border: '1px solid #dde4e9',
-                background: '#fafbfc', textDecoration: 'none', color: '#16232b', fontSize: 13,
+                background: '#fafbfc', color: '#16232b', fontSize: 13, cursor: 'pointer', textAlign: 'left',
               }}
             >
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 12 }}>{d.nombre_archivo}</span>
-              <span style={{ color: '#1f7a8c', fontWeight: 700, flexShrink: 0 }}>👁 Ver / Descargar</span>
-            </a>
+              <span style={{ color: '#1f7a8c', fontWeight: 700, flexShrink: 0 }}>👁 Ver</span>
+            </button>
           ))}
         </div>
       )}
@@ -167,19 +195,36 @@ function CompartirDocumentosOTInterno() {
     cargar()
   }, [otNumber, token])
 
+  // ── Deduplicar por nombre de archivo ────────────────────────────────────
+  // Si hay copias repetidas del mismo documento (ej. un Acta de Conformidad
+  // subida 41 veces por un bug en otro sistema), el cliente solo debe ver
+  // UNA — la más reciente. Esto no arregla la causa (está en MetroTrack),
+  // pero evita que el cliente vea una lista larga y repetida.
+  const documentosUnicos = []
+  const vistos = new Set()
+  for (const d of documentos) { // ya viene ordenado por created_at desc dentro de cada tipo
+    const clave = `${(d.tipo_documento || '').toLowerCase()}::${d.nombre_archivo}`
+    if (vistos.has(clave)) continue
+    vistos.add(clave)
+    documentosUnicos.push(d)
+  }
+
   const grupos = {}
-  for (const d of documentos) {
+  for (const d of documentosUnicos) {
     const key = (d?.tipo_documento || 'otros').toLowerCase()
     if (!grupos[key]) grupos[key] = []
     grupos[key].push(d)
   }
   const certificados = grupos['certificado'] || []
   const trazabilidades = grupos['trazabilidad'] || []
-  const otrosGrupos = Object.entries(grupos).filter(([k]) => k !== 'certificado' && k !== 'trazabilidad')
+  const proformaYOC = Object.entries(grupos).filter(([k]) => k === 'proforma' || k === 'orden de compra' || k === 'cotización')
+  const otrosGrupos = Object.entries(grupos).filter(([k]) => !['certificado', 'trazabilidad', 'proforma', 'orden de compra', 'cotización'].includes(k))
 
   function irA(id) {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+
+  const [docAbierto, setDocAbierto] = useState(null)
 
   return (
     <div style={{ minHeight: '100vh', background: '#eef1f5', fontFamily: "'Segoe UI', Roboto, sans-serif" }}>
@@ -218,6 +263,11 @@ function CompartirDocumentosOTInterno() {
             <p style={{ fontSize: 15, color: '#c7d2e0', maxWidth: 480, margin: '0 auto 26px', lineHeight: 1.6 }}>
               Accede de manera rápida y segura a toda la documentación desde el siguiente enlace:
             </p>
+            <div style={{ fontSize: 13, color: '#fff', background: 'rgba(255,255,255,0.12)', display: 'inline-block', padding: '6px 16px', borderRadius: 999, marginBottom: 22, fontWeight: 700 }}>
+              Orden de trabajo: {otNumber}
+              {proformaYOC.length > 0 && ` · ${proformaYOC.map(([k]) => etiquetaDe(k).titulo).join(' / ')} disponible`}
+            </div>
+            <br />
             <button
               onClick={() => irA('lista-documentos')}
               style={{
@@ -232,7 +282,7 @@ function CompartirDocumentosOTInterno() {
           </div>
 
           {/* ── Qué encontrarás ── */}
-          <div style={{ maxWidth: 720, margin: '0 auto', padding: '40px 20px' }}>
+          <div style={{ maxWidth: 1100, margin: '0 auto', padding: '40px 24px' }}>
             <h2 style={{ textAlign: 'center', fontSize: 19, fontWeight: 800, color: '#16232b', marginBottom: 24 }}>¿Qué encontrarás?</h2>
 
             <div style={{ display: 'grid', gridTemplateColumns: certificados.length && trazabilidades.length ? '1fr 1fr' : '1fr', gap: 18, marginBottom: 30 }}>
@@ -287,18 +337,23 @@ function CompartirDocumentosOTInterno() {
 
             {/* ── Listas detalladas ── */}
             <div id="lista-documentos">
+              {proformaYOC.map(([tipo, docs]) => (
+                <div key={tipo} style={{ marginBottom: 20 }}>
+                  <CarpetaDocumentos tipo={tipo} docs={docs} onVerDocumento={setDocAbierto} />
+                </div>
+              ))}
               {certificados.length > 0 && (
                 <div id="certificados-lista" style={{ marginBottom: 20 }}>
-                  <CarpetaDocumentos tipo="certificado" docs={certificados} />
+                  <CarpetaDocumentos tipo="certificado" docs={certificados} onVerDocumento={setDocAbierto} />
                 </div>
               )}
               {trazabilidades.length > 0 && (
                 <div id="trazabilidad-lista" style={{ marginBottom: 20 }}>
-                  <CarpetaDocumentos tipo="trazabilidad" docs={trazabilidades} />
+                  <CarpetaDocumentos tipo="trazabilidad" docs={trazabilidades} onVerDocumento={setDocAbierto} />
                 </div>
               )}
               {otrosGrupos.map(([tipo, docs]) => (
-                <CarpetaDocumentos key={tipo} tipo={tipo} docs={docs} />
+                <CarpetaDocumentos key={tipo} tipo={tipo} docs={docs} onVerDocumento={setDocAbierto} />
               ))}
             </div>
 
@@ -308,6 +363,8 @@ function CompartirDocumentosOTInterno() {
           </div>
         </>
       )}
+
+      {docAbierto && <VisorDocumento doc={docAbierto} onClose={() => setDocAbierto(null)} />}
     </div>
   )
 }
