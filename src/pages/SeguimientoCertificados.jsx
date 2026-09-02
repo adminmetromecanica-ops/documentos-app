@@ -229,13 +229,13 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
 
   return (
     <div
-      onClick={onClose}
+      onClick={() => { if (!urlVistaPrevia) onClose() }}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
     >
       {urlVistaPrevia && (
         <div
           onClick={(e) => e.stopPropagation()}
-          style={{ position: 'fixed', inset: 20, background: '#fff', borderRadius: 12, zIndex: 1100, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }}
+          style={{ position: 'fixed', inset: 0, background: '#fff', zIndex: 1100, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         >
           <div style={{ padding: '10px 16px', background: '#16232b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <strong style={{ color: '#fff', fontSize: 13 }}>🔎 Vista previa — lo que verá el cliente</strong>
