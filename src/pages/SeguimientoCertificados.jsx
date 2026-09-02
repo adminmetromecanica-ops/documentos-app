@@ -52,13 +52,17 @@ const URL_APP_PUBLICA = 'https://documentos-app-ten.vercel.app'
 // distintos cada vez que se envía un recordatorio de la misma orden); si
 // no existe, crea uno nuevo y lo guarda.
 async function obtenerOCrearTokenCompartido(otNumber) {
-  const { data: existente } = await supabase
+  const { data: existente, error: errSelect } = await supabase
     .from('enlaces_compartidos')
     .select('token')
     .eq('ot_number', otNumber)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+  if (errSelect) {
+    console.error('Error buscando enlace compartido existente:', errSelect)
+    return null
+  }
   if (existente?.token) return existente.token
 
   const token = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/-/g, '')
@@ -200,7 +204,7 @@ function Badge({ estado }) {
 
 // ── Modal de recordatorio — mismo patrón que Seguimiento de Facturas ────
 function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
-  const { ot, correo, mensaje, cargandoDocs, documentos, enlaceVistaPrevia } = datos
+  const { ot, correo, mensaje, cargandoDocs, documentos, enlaceVistaPrevia, errorVistaPrevia } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
   const [mostrandoVistaPrevia, setMostrandoVistaPrevia] = useState(false)
   const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
@@ -286,6 +290,8 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
                 >
                   🔎 Vista previa (página del cliente)
                 </button>
+              ) : errorVistaPrevia ? (
+                <span style={{ fontSize: 11, color: '#c0392b' }}>⚠ No se pudo generar la vista previa (revisa la tabla enlaces_compartidos)</span>
               ) : (
                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>⏳ Generando vista previa...</span>
               )}
@@ -532,7 +538,13 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
 
   // ── Anexa los enlaces al mensaje — individuales si son pocos, o un solo
   // enlace a la página pública si son más de UMBRAL_ENLACE_UNICO. ────────
-  async function abrirRecordatorio(fila) {
+  // IMPORTANTE: el modal se abre de inmediato con lo que ya se tiene (sin
+  // esperar ninguna consulta a Supabase) — el enlace de vista previa se
+  // genera DESPUÉS, en segundo plano, y actualiza el modal cuando esté
+  // listo. Antes todo esto se esperaba ANTES de mostrar el modal, así que
+  // un solo "Enviar" tardaba varios segundos en pantalla sin dar ninguna
+  // señal — se sentía como que "no abría nada".
+  function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
       alert('Esta OT no tiene un correo de contacto registrado en MetroTrack (pestaña Datos).')
@@ -543,29 +555,29 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
-    // Enlace de vista previa: se genera de una vez al abrir el modal (no
-    // al hacer clic) para que el botón sea un <a target="_blank"> normal
-    // — igual que el de Gmail, que ya sabemos que funciona bien — en vez
-    // de un window.open() disparado después de un await, que en algunos
-    // navegadores/contextos se comporta de forma menos predecible.
-    let enlaceVistaPrevia = null
-    let mensaje = mensajeBase
-    if (documentos.length > UMBRAL_ENLACE_UNICO) {
-      const token = await obtenerOCrearTokenCompartido(fila.ot_number)
-      if (token) {
-        enlaceVistaPrevia = construirLinkPaginaPublica(fila.ot_number, token)
-        mensaje = `${mensajeBase}\n\nPuede ver y descargar todos los documentos (${documentos.length}) desde este enlace:\n${enlaceVistaPrevia}`
-      }
-    } else if (documentos.length > 0) {
-      const lineasDocs = documentos.map((d) => `${d.tipo}: ${d.url}`)
-      mensaje = `${mensajeBase}\n\nDocumentos:\n${lineasDocs.join('\n')}`
-    }
-    if (!enlaceVistaPrevia) {
-      const token = await obtenerOCrearTokenCompartido(fila.ot_number)
-      if (token) enlaceVistaPrevia = construirLinkPaginaPublica(fila.ot_number, token)
-    }
+    const mensajeInicial = documentos.length > 0 && documentos.length <= UMBRAL_ENLACE_UNICO
+      ? `${mensajeBase}\n\nDocumentos:\n${documentos.map((d) => `${d.tipo}: ${d.url}`).join('\n')}`
+      : mensajeBase
 
-    setModalRecordatorio({ ot: fila, correo, mensaje, cargandoDocs: false, documentos, enlaceVistaPrevia })
+    // Aparece YA, sin esperar nada de red.
+    setModalRecordatorio({
+      ot: fila, correo, mensaje: mensajeInicial, cargandoDocs: false, documentos,
+      enlaceVistaPrevia: null, errorVistaPrevia: false,
+    })
+
+    // El token (para la vista previa, y para el enlace único si hay más de
+    // UMBRAL_ENLACE_UNICO documentos) se genera aparte, sin bloquear nada.
+    obtenerOCrearTokenCompartido(fila.ot_number).then((token) => {
+      setModalRecordatorio((prev) => {
+        if (!prev || prev.ot.ot_number !== fila.ot_number) return prev // el modal ya cambió de OT o se cerró
+        if (!token) return { ...prev, errorVistaPrevia: true }
+        const enlace = construirLinkPaginaPublica(fila.ot_number, token)
+        const mensajeConEnlaceUnico = documentos.length > UMBRAL_ENLACE_UNICO
+          ? `${mensajeBase}\n\nPuede ver y descargar todos los documentos (${documentos.length}) desde este enlace:\n${enlace}`
+          : prev.mensaje
+        return { ...prev, enlaceVistaPrevia: enlace, mensaje: mensajeConEnlaceUnico }
+      })
+    })
   }
 
   if (!acceso) {
