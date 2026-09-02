@@ -202,15 +202,24 @@ function Badge({ estado }) {
 function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
   const { ot, correo, mensaje, cargandoDocs, documentos, enlaceVistaPrevia } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
+  const [mostrandoVistaPrevia, setMostrandoVistaPrevia] = useState(false)
   const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — OT ${ot.ot_number}`, mensaje, remitente)
 
   function copiarMensaje() {
     navigator.clipboard.writeText(mensaje)
   }
 
+  // ── Vista previa DENTRO de la misma ventana (iframe, no pestaña nueva) ──
+  // Confirmado: la app se abre desde un acceso directo que lanza Chrome en
+  // "modo aplicación" (sin pestañas reales) — un target="_blank" ahí puede
+  // navegar la ÚNICA ventana existente en vez de abrir una aparte. El
+  // iframe evita el problema por completo: nunca sale de esta ventana.
+  // El fondo oscuro NO cierra el modal mientras la vista previa esté
+  // activa (ver el onClick del contenedor más abajo) — así un clic
+  // cercano al borde no puede cerrar todo por error.
   return (
     <div
-      onClick={onClose}
+      onClick={() => { if (!mostrandoVistaPrevia) onClose() }}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
     >
       <div
@@ -218,6 +227,19 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
         className="card"
         style={{ width: '100%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
       >
+        {mostrandoVistaPrevia ? (
+          <>
+            <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <strong style={{ fontSize: 16 }}>🔎 Vista previa — lo que verá el cliente</strong>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => setMostrandoVistaPrevia(false)}>← Volver a redactar</button>
+                <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+              </div>
+            </div>
+            <iframe src={enlaceVistaPrevia} title="Vista previa del cliente" style={{ flex: 1, width: '100%', border: 'none', minHeight: 500 }} />
+          </>
+        ) : (
+          <>
         <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
           <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
@@ -255,20 +277,15 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos</label>
-              {/* Mismo patrón que "Abrir en Gmail" — un <a target="_blank"> real,
-                  no window.open() — es el que ya sabemos que funciona sin
-                  afectar el resto de la pantalla al cerrarlo. */}
               {enlaceVistaPrevia ? (
-                <a
-                  href={enlaceVistaPrevia}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
                   className="btn btn-secondary"
-                  style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}
-                  title="Abre en una pestaña nueva la misma página que vería el cliente"
+                  style={{ fontSize: 11, padding: '4px 10px' }}
+                  onClick={() => setMostrandoVistaPrevia(true)}
+                  title="Muestra dentro de esta misma ventana lo que vería el cliente"
                 >
                   🔎 Vista previa (página del cliente)
-                </a>
+                </button>
               ) : (
                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>⏳ Generando vista previa...</span>
               )}
@@ -302,6 +319,8 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
             📧 Abrir en Gmail para enviar
           </a>
         </div>
+          </>
+        )}
       </div>
     </div>
   )
