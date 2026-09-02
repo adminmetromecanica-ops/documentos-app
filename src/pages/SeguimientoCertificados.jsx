@@ -203,7 +203,7 @@ function Badge({ estado }) {
 }
 
 // ── Modal de recordatorio — mismo patrón que Seguimiento de Facturas ────
-function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
+function ModalRecordatorio({ datos, onClose, onCambiarMensaje, onRegistrarEnvio }) {
   const { ot, correo, mensaje, cargandoDocs, documentos, enlaceVistaPrevia, errorVistaPrevia } = datos
   const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
   const [mostrandoVistaPrevia, setMostrandoVistaPrevia] = useState(false)
@@ -321,7 +321,15 @@ function ModalRecordatorio({ datos, onClose, onCambiarMensaje }) {
 
         <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-          <a className="btn" href={linkGmail} target="_blank" rel="noreferrer" title={`Gmail — ${remitente}`} style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+          <a
+            className="btn"
+            href={linkGmail}
+            target="_blank"
+            rel="noreferrer"
+            title={`Gmail — ${remitente}`}
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+            onClick={() => onRegistrarEnvio(ot.ot_number)}
+          >
             📧 Abrir en Gmail para enviar
           </a>
         </div>
@@ -414,6 +422,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
   const navigate = useNavigate()
   const [servicios, setServicios] = useState([])
   const [documentos, setDocumentos] = useState([])
+  const [ultimoEnvioPorOT, setUltimoEnvioPorOT] = useState({})
   const [loading, setLoading] = useState(true)
   const filtrosGuardados = leerFiltrosGuardados()
   const [tab, setTab] = useState(filtrosGuardados.tab || 'seguimiento') // 'seguimiento' | 'sin_documentos'
@@ -450,16 +459,33 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
 
   async function cargarDatos() {
     setLoading(true)
-    const [{ data: svcs, error: errSvcs }, { data: docs, error: errDocs }] = await Promise.all([
+    const [{ data: svcs, error: errSvcs }, { data: docs, error: errDocs }, { data: envios, error: errEnvios }] = await Promise.all([
       supabase.from('services').select('id, ot_number, client, ruc, status, due_date, ingresos, correo, contacto'),
       supabase.from('documentos').select('id, ot_number, tipo_documento, nombre_archivo, ruta_minio, created_at')
         .or(['certificado', 'trazabilidad'].map((t) => `tipo_documento.ilike.${t}`).join(',')),
+      supabase.from('envios_certificados').select('ot_number, enviado_en').order('enviado_en', { ascending: false }),
     ])
     if (errSvcs) console.error('Error cargando servicios:', errSvcs)
     if (errDocs) console.error('Error cargando documentos:', errDocs)
+    if (errEnvios) console.error('Error cargando envíos:', errEnvios)
     setServicios(svcs || [])
     setDocumentos(docs || [])
+    // Solo el envío más reciente por OT (la lista ya viene ordenada desc).
+    const mapaEnvios = {}
+    for (const e of envios || []) {
+      if (!mapaEnvios[e.ot_number]) mapaEnvios[e.ot_number] = e.enviado_en
+    }
+    setUltimoEnvioPorOT(mapaEnvios)
     setLoading(false)
+  }
+
+  // Se llama al hacer clic en "Abrir en Gmail para enviar" — deja constancia
+  // de que esa OT ya se le mandó correo, sin bloquear nada (no se espera).
+  function registrarEnvio(otNumber) {
+    supabase.from('envios_certificados').insert({ ot_number: otNumber }).then(({ error }) => {
+      if (error) { console.error('No se pudo registrar el envío:', error); return }
+      setUltimoEnvioPorOT((prev) => ({ ...prev, [otNumber]: new Date().toISOString() }))
+    })
   }
 
   useEffect(() => {
@@ -490,9 +516,10 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
         docsCertificados: docs.certificados,
         docsTrazabilidades: docs.trazabilidades,
         estado,
+        ultimoEnvio: ultimoEnvioPorOT[s.ot_number] || null,
       }
     })
-  }, [servicios, documentos])
+  }, [servicios, documentos, ultimoEnvioPorOT])
 
   const kpis = useMemo(() => {
     const conEquipos = filas.filter((f) => f.equipos > 0)
@@ -536,14 +563,13 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       })
   }, [filas, tab, busqueda, fechaDesde, fechaHasta])
 
-  // ── Anexa los enlaces al mensaje — individuales si son pocos, o un solo
-  // enlace a la página pública si son más de UMBRAL_ENLACE_UNICO. ────────
-  // IMPORTANTE: el modal se abre de inmediato con lo que ya se tiene (sin
-  // esperar ninguna consulta a Supabase) — el enlace de vista previa se
-  // genera DESPUÉS, en segundo plano, y actualiza el modal cuando esté
-  // listo. Antes todo esto se esperaba ANTES de mostrar el modal, así que
-  // un solo "Enviar" tardaba varios segundos en pantalla sin dar ninguna
-  // señal — se sentía como que "no abría nada".
+  // ── Siempre usa la plataforma propia (la página con el logo y las
+  // carpetas de Certificados/Trazabilidad) — sin importar si hay 1 o 20
+  // documentos. Antes, con pocos documentos, se mandaban enlaces sueltos
+  // en el correo en vez de la página con marca — ahora es consistente
+  // siempre. El modal se abre de inmediato con lo que ya se tiene (sin
+  // esperar ninguna consulta a Supabase); el enlace se agrega al mensaje
+  // apenas está listo, en segundo plano.
   function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
@@ -555,27 +581,22 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
-    const mensajeInicial = documentos.length > 0 && documentos.length <= UMBRAL_ENLACE_UNICO
-      ? `${mensajeBase}\n\nDocumentos:\n${documentos.map((d) => `${d.tipo}: ${d.url}`).join('\n')}`
-      : mensajeBase
-
     // Aparece YA, sin esperar nada de red.
     setModalRecordatorio({
-      ot: fila, correo, mensaje: mensajeInicial, cargandoDocs: false, documentos,
+      ot: fila, correo, mensaje: mensajeBase, cargandoDocs: false, documentos,
       enlaceVistaPrevia: null, errorVistaPrevia: false,
     })
 
-    // El token (para la vista previa, y para el enlace único si hay más de
-    // UMBRAL_ENLACE_UNICO documentos) se genera aparte, sin bloquear nada.
+    // El token para la página pública se genera aparte, sin bloquear nada.
     obtenerOCrearTokenCompartido(fila.ot_number).then((token) => {
       setModalRecordatorio((prev) => {
         if (!prev || prev.ot.ot_number !== fila.ot_number) return prev // el modal ya cambió de OT o se cerró
         if (!token) return { ...prev, errorVistaPrevia: true }
         const enlace = construirLinkPaginaPublica(fila.ot_number, token)
-        const mensajeConEnlaceUnico = documentos.length > UMBRAL_ENLACE_UNICO
-          ? `${mensajeBase}\n\nPuede ver y descargar todos los documentos (${documentos.length}) desde este enlace:\n${enlace}`
-          : prev.mensaje
-        return { ...prev, enlaceVistaPrevia: enlace, mensaje: mensajeConEnlaceUnico }
+        const mensajeConEnlace = documentos.length > 0
+          ? `${mensajeBase}\n\nPuede ver y descargar ${documentos.length === 1 ? 'el documento' : `los ${documentos.length} documentos`} desde este enlace:\n${enlace}`
+          : mensajeBase
+        return { ...prev, enlaceVistaPrevia: enlace, mensaje: mensajeConEnlace }
       })
     })
   }
@@ -750,7 +771,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
-                  {['OT', 'Fecha', 'Cliente', 'Equipos', 'Certificados', 'Trazabilidades', 'Estado', 'Enviar'].map((h) => (
+                  {['OT', 'Fecha', 'Cliente', 'Equipos', 'Certificados', 'Trazabilidades', 'Estado', 'Envío', 'Enviar'].map((h) => (
                     <th key={h} style={{ position: 'sticky', top: 0, background: 'rgba(240, 251, 253, 0.97)', padding: '10px', textAlign: 'left', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' }}>
                       {h}
                     </th>
@@ -773,6 +794,15 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
                       {f.trazabilidades} / {f.equipos}
                     </td>
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)' }}><Badge estado={f.estado} /></td>
+                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontSize: 11.5 }}>
+                      {f.ultimoEnvio ? (
+                        <span style={{ color: '#2f8f5b', fontWeight: 700 }} title={new Date(f.ultimoEnvio).toLocaleString('es-PE')}>
+                          ✉ Enviado {fmtFecha(f.ultimoEnvio.slice(0, 10))}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>— Sin enviar</span>
+                      )}
+                    </td>
                     <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
                       {puedeEditar && (
                         <button className="btn btn-secondary" style={{ fontSize: 12, padding: '5px 10px' }} onClick={() => abrirRecordatorio(f)}>
@@ -793,6 +823,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
           datos={modalRecordatorio}
           onClose={() => setModalRecordatorio(null)}
           onCambiarMensaje={(m) => setModalRecordatorio((prev) => ({ ...prev, mensaje: m }))}
+          onRegistrarEnvio={registrarEnvio}
         />
       )}
     </div>
