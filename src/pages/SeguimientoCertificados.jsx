@@ -41,43 +41,9 @@ const CUENTAS_REMITENTE = [
 ]
 
 // ── Página pública para compartir documentos (sin login) ─────────────
-// Cuando hay más de este umbral de documentos, en vez de listar cada
-// enlace individual en el correo (saturado y poco elegante), se genera
-// UN solo enlace a la página pública "/compartir/:otNumber?token=..." con
-// todos los documentos organizados ahí — ver CompartirDocumentosOT.jsx.
-const UMBRAL_ENLACE_UNICO = 5
-const URL_APP_PUBLICA = 'https://documentos-app-ten.vercel.app'
-
-// Reutiliza el token si ya existe uno para esa OT (para no generar links
-// distintos cada vez que se envía un recordatorio de la misma orden); si
-// no existe, crea uno nuevo y lo guarda.
-async function obtenerOCrearTokenCompartido(otNumber) {
-  const { data: existente, error: errSelect } = await supabase
-    .from('enlaces_compartidos')
-    .select('token')
-    .eq('ot_number', otNumber)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (errSelect) {
-    console.error('Error buscando enlace compartido existente:', errSelect)
-    return null
-  }
-  if (existente?.token) return existente.token
-
-  const token = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/-/g, '')
-  const { error } = await supabase.from('enlaces_compartidos').insert({ ot_number: otNumber, token })
-  if (error) {
-    console.error('No se pudo crear el enlace compartido:', error)
-    return null
-  }
-  return token
-}
-
-function construirLinkPaginaPublica(otNumber, token) {
-  return `${URL_APP_PUBLICA}/compartir/${encodeURIComponent(otNumber)}?token=${token}`
-}
-
+// Enlaces individuales organizados por carpeta — sin depender de ningún
+// workflow adicional de n8n. Cada enlace usa el mismo endpoint robusto
+// (ver-documento) que ya funciona en toda la app.
 // Compositor web de Gmail — ahora recibe el remitente como parámetro (en
 // vez de una constante fija), para que se pueda elegir en el modal.
 function construirLinkCorreo(destinatario, asunto, cuerpo, remitente) {
@@ -141,28 +107,45 @@ function tieneValorReal(valor) {
   return valor && !VALORES_SIN_DATO.includes(valor.trim().toLowerCase())
 }
 
-// ── Mensaje corto, estilo "certificado digital" — un saludo, contexto breve
-// y UN enlace destacado. Se quitó el resumen detallado y la lista de
-// equipos (quedaban muy largos); esa información ya la ve el cliente
-// dentro de la página con las carpetas de Certificados/Trazabilidad.
-// `enlace` es null mientras se genera — en ese caso muestra un texto de
-// espera en su lugar.
-function armarMensajeRecordatorio(fila, enlace) {
-  const { ot_number, client } = fila
+// ── Mensaje formal, estilo carta de entrega — con enlaces individuales
+// organizados en 2 secciones (Certificados / Trazabilidad). Cada enlace usa
+// el endpoint robusto (ver-documento) que ya funciona en toda la app —
+// sin depender de ningún workflow nuevo de n8n.
+function armarMensajeRecordatorio(fila) {
+  const { ot_number, client, docsCertificados, docsTrazabilidades } = fila
+
+  const lineasAdjuntos = []
+  if (docsCertificados.length > 0) {
+    lineasAdjuntos.push(
+      `CERTIFICADOS DE CALIBRACIÓN (${docsCertificados.length}):`,
+      ...docsCertificados.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
+    )
+  }
+  if (docsTrazabilidades.length > 0) {
+    if (lineasAdjuntos.length > 0) lineasAdjuntos.push('')
+    lineasAdjuntos.push(
+      `TRAZABILIDAD (${docsTrazabilidades.length}):`,
+      ...docsTrazabilidades.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
+    )
+  }
+
   return [
-    `Estimado(a) ${client || 'Cliente'},`,
+    `Sr(es): ${client || '—'},`,
     '',
-    `Adjuntamos los certificados de calibración y documentos de trazabilidad correspondientes a los servicios realizados (Orden de Trabajo ${ot_number}).`,
+    `Mediante la presente se hace llegar los certificados de calibración y/o documentos de trazabilidad correspondientes a la Orden de Trabajo ${ot_number}.`,
     '',
-    'Acceda de manera rápida y segura a toda la documentación desde el siguiente enlace:',
-    enlace ? `🔵 Acceder a mis documentos: ${enlace}` : '⏳ Generando enlace...',
+    ...lineasAdjuntos,
     '',
-    'Ante cualquier consulta, no dude en escribirnos.',
+    'Favor confirmar la recepción de los documentos por este medio.',
     '',
-    'Saludos cordiales,',
-    'Laboratorio de Calibración',
-    'MetroMecánica Ingeniería y Metrología S.A.C.',
-    'RUC: 20605421696',
+    'OBSERVACIONES:',
+    'Ante cualquier consulta sobre el detalle técnico de los certificados, no dude en escribirnos.',
+    '',
+    'Atte.',
+    '',
+    'E. Gabriel Ramírez Flores',
+    'Laboratorio MetroMecánica',
+    'laboratorio@metromecanica.com.pe',
   ].join('\n')
 }
 
@@ -521,8 +504,9 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
   // ── Siempre la página pública, sin importar cuántos documentos haya ────
   // El modal aparece de inmediato con lo que ya se tiene; el enlace se
   // agrega al mensaje apenas está listo, en segundo plano, sin bloquear
-  // nada. Nadie de MetroMecánica necesita abrir ese enlace para probarlo —
-  // lo abre el cliente en su propio navegador.
+  // ── Genera los ZIP de certificados y trazabilidad en segundo plano ─────
+  // Aparece de inmediato — todos los enlaces se construyen directo de los
+  // datos que ya tenemos cargados, sin ninguna llamada de red adicional.
   function abrirRecordatorio(fila) {
     const correo = fila.correo || ''
     if (!correo) {
@@ -533,16 +517,7 @@ export default function SeguimientoCertificados({ profile, onLogout }) {
       id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
     }))
 
-    setModalRecordatorio({ ot: fila, correo, mensaje: armarMensajeRecordatorio(fila, null), cargandoDocs: false, documentos })
-
-    obtenerOCrearTokenCompartido(fila.ot_number).then((token) => {
-      setModalRecordatorio((prev) => {
-        if (!prev || prev.ot.ot_number !== fila.ot_number) return prev
-        if (!token) return prev
-        const enlace = construirLinkPaginaPublica(fila.ot_number, token)
-        return { ...prev, mensaje: armarMensajeRecordatorio(fila, enlace) }
-      })
-    })
+    setModalRecordatorio({ ot: fila, correo, mensaje: armarMensajeRecordatorio(fila), cargandoDocs: false, documentos })
   }
 
   if (!acceso) {
