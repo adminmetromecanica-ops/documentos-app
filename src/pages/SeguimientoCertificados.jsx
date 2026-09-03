@@ -118,14 +118,14 @@ function armarMensajeRecordatorio(fila) {
   if (docsCertificados.length > 0) {
     lineasAdjuntos.push(
       `CERTIFICADOS DE CALIBRACIÓN (${docsCertificados.length}):`,
-      ...docsCertificados.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
+      ...docsCertificados.map((d) => `⚫ ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
     )
   }
   if (docsTrazabilidades.length > 0) {
     if (lineasAdjuntos.length > 0) lineasAdjuntos.push('')
     lineasAdjuntos.push(
       `TRAZABILIDAD (${docsTrazabilidades.length}):`,
-      ...docsTrazabilidades.map((d) => `• ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
+      ...docsTrazabilidades.map((d) => `⚫ ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
     )
   }
 
