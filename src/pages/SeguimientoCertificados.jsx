@@ -1,756 +1,763 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabaseClient'
+// src/components/certificados/CertificadosModule.jsx
+import React, { useState, useRef, useEffect } from 'react'
+import { supabase } from '../../lib/supabase'
+import { useCertificados, MAGNITUDES, ESTADOS } from '../../hooks/useCertificados'
 
-// ── Acceso ──────────────────────────────────────────────────────────────
-// Por ahora solo Gerencia/admin@ (área 'gerencia'). Cuando exista un área
-// de Calidad separada, basta con agregarla a este array — nada más del
-// archivo depende de esta lista.
-const AREAS_PERMITIDAS = ['gerencia']
-const AREAS_EDITAN = ['gerencia']
 
-const WEBHOOK_VER_DOCUMENTO_REDIRECT = "https://panel.5-189-165-144.sslip.io/api-patrones/ver-documento"
-
-function construirEnlaceDocumento(rutaMinio) {
-  return `${WEBHOOK_VER_DOCUMENTO_REDIRECT}?ruta=${encodeURIComponent(rutaMinio)}`
+const MAGNITUDES_LABEL = {
+  masa_balanza:  'Masa Balanza',
+  masa_pesas:    'Masa Pesas',
+  presion:       'Presión',
+  temperatura:   'Temperatura',
+  fuerza:        'Fuerza',
+  longitud:      'Longitud',
+  energia:       'Energía',
+  eq_medicos:    'Eq. Médicos',
+  quimica:       'Química',
+  otras:         'Otras Magnitudes',
+  mantenimiento: 'Ensayo/Mant./Verif.',
 }
 
-function normalizarTelefonoWhatsApp(telefono) {
-  if (!telefono) return null
-  const soloDigitos = telefono.replace(/[^\d]/g, '')
-  if (!soloDigitos) return null
-  if (soloDigitos.length === 9) return `51${soloDigitos}`
-  return soloDigitos
-}
+const isMobile = () => window.innerWidth < 768
 
-function extraerTelefonoDeContacto(contactoTexto) {
-  if (!contactoTexto) return ''
-  const match = contactoTexto.match(/(\+?\d[\d\s-]{7,}\d)/)
-  if (!match) return ''
-  return match[1].replace(/[\s-]/g, '')
-}
-
-// ── Cuentas disponibles como remitente ────────────────────────────────
-// Se puede elegir en el modal — la app no puede forzar cuál usa Gmail
-// (eso depende de qué cuentas tengas logueadas en el navegador), pero al
-// menos deja armar el enlace con la que corresponda.
-const CUENTAS_REMITENTE = [
-  { valor: 'laboratorio@metromecanica.com.pe', etiqueta: 'Laboratorio' },
-  { valor: 'contabilidad@metromecanica.com.pe', etiqueta: 'Contabilidad' },
-  { valor: 'admin@metromecanica.com.pe', etiqueta: 'Administración' },
-]
-
-// ── Página pública para compartir documentos (sin login) ─────────────
-// Enlaces individuales organizados por carpeta — sin depender de ningún
-// workflow adicional de n8n. Cada enlace usa el mismo endpoint robusto
-// (ver-documento) que ya funciona en toda la app.
-// Compositor web de Gmail — ahora recibe el remitente como parámetro (en
-// vez de una constante fija), para que se pueda elegir en el modal.
-function construirLinkCorreo(destinatario, asunto, cuerpo, remitente) {
-  const params = new URLSearchParams({
-    view: 'cm', fs: '1', to: destinatario, su: asunto, body: cuerpo,
-    authuser: remitente,
+// ── Modal de edición ──────────────────────────────────────────
+// ── FIX: una vez asignado el código, los campos que definen a qué
+// equipo/OT corresponde (equipo, marca, modelo, N° serie, cliente, OT) ya
+// no se pueden tocar — solo quedan editables la fecha de calibración y las
+// observaciones. Esto evita que un certificado termine "migrando" a un
+// equipo distinto del que originó su código.
+function EditModal({ cert, onClose, onSave }) {
+  const mag = MAGNITUDES.find(m => m.id === cert.magnitud)
+  const [form, setForm] = useState({
+    observaciones:     cert.observaciones || '',
+    fecha_calibracion: cert.fecha_calibracion || new Date().toISOString().split('T')[0],
   })
-  return `https://mail.google.com/mail/?${params.toString()}`
-}
+  const [saving, setSaving] = useState(false)
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
 
-function fmtFecha(f) {
-  if (!f) return '—'
-  return new Date(f + 'T00:00:00').toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-function hoyISO() {
-  return new Date().toISOString().split('T')[0]
-}
-
-function mesActualValue() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-}
-
-// ── Extrae la cantidad de equipos de una OT desde services.ingresos ──────
-// La columna ya llega como array (jsonb) desde Supabase — sin necesidad de
-// JSON.parse, igual que en el resto de la app (ver EquiposIngresadosCard).
-function contarEquipos(ingresos) {
-  return Array.isArray(ingresos) ? ingresos.length : 0
-}
-
-// ── Semáforo de completitud (Certificado + Trazabilidad vs. equipos) ────
-// Antes "Parcial" y "Sin docs" eran dos tonos café/naranja muy parecidos —
-// ahora usan matices claramente distintos (ámbar dorado vs. rojo intenso)
-// para que se distingan de un vistazo, no solo por el texto.
-const ESTADO_CFG = {
-  completo: { color: '#2f8f5b', titulo: 'Certificados y trazabilidades completos', texto: 'COMPLETO' },
-  parcial: { color: '#d9a418', titulo: 'Faltan certificados o trazabilidades de algunos equipos', texto: 'PARCIAL' },
-  sin_documentos: { color: '#c0392b', titulo: 'Sin certificados ni trazabilidades subidas', texto: 'SIN DOCS' },
-  sin_equipos: { color: '#6b7280', titulo: 'Esta OT no tiene equipos registrados en Ingresos', texto: 'SIN EQUIPOS' },
-}
-
-// ── FIX: antes exigía tantas trazabilidades como equipos (1 a 1), pero un
-// mismo patrón puede respaldar varios certificados a la vez — no hay una
-// trazabilidad por equipo, sino una por patrón usado (que puede ser
-// compartido). Mientras no exista un cruce automático por patrón (ver idea
-// más abajo), el criterio pragmático es: certificados sí deben ser uno por
-// equipo, pero para trazabilidad basta con que haya AL MENOS UNA subida.
-function calcularEstado(equipos, certificados, trazabilidades) {
-  if (equipos === 0) return 'sin_equipos'
-  if (certificados === 0 && trazabilidades === 0) return 'sin_documentos'
-  if (certificados >= equipos && trazabilidades >= 1) return 'completo'
-  return 'parcial'
-}
-
-// ── Mensaje del correo — versión completa ─────────────────────────────
-// Incluye el detalle de cada equipo (no solo el conteo) y cambia el cierre
-// según si ya está todo listo o si aún falta algo, para que el mensaje
-// tenga sentido en ambos casos sin sonar genérico.
-// ── Valores placeholder que no deben mostrarse al cliente tal cual ───────
-// Cuando el técnico no especifica marca/modelo, el sistema de Ingresos
-// guarda literalmente "NO INDICA" — mostrarlo en un correo se ve poco
-// profesional, así que se omite en vez de imprimirlo.
-const VALORES_SIN_DATO = ['no indica', 'no especifica', 's/n', 'sin serie', 'n/a', '']
-
-function tieneValorReal(valor) {
-  return valor && !VALORES_SIN_DATO.includes(valor.trim().toLowerCase())
-}
-
-// ── Mensaje formal, estilo carta de entrega — con enlaces individuales
-// organizados en 2 secciones (Certificados / Trazabilidad). Cada enlace usa
-// el endpoint robusto (ver-documento) que ya funciona en toda la app —
-// sin depender de ningún workflow nuevo de n8n.
-function armarMensajeRecordatorio(fila) {
-  const { ot_number, client, docsCertificados, docsTrazabilidades } = fila
-
-  const lineasAdjuntos = []
-  if (docsCertificados.length > 0) {
-    lineasAdjuntos.push(
-      `CERTIFICADOS DE CALIBRACIÓN (${docsCertificados.length}):`,
-      ...docsCertificados.map((d) => `⚫ ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
-    )
-  }
-  if (docsTrazabilidades.length > 0) {
-    if (lineasAdjuntos.length > 0) lineasAdjuntos.push('')
-    lineasAdjuntos.push(
-      `TRAZABILIDAD (${docsTrazabilidades.length}):`,
-      ...docsTrazabilidades.map((d) => `⚫ ${d.nombre_archivo}\n  ${construirEnlaceDocumento(d.ruta_minio)}`)
-    )
+  const handleSave = async () => {
+    setSaving(true)
+    await onSave(cert.id, form)
+    setSaving(false)
+    onClose()
   }
 
-  return [
-    `Sr(es): ${client || '—'},`,
-    '',
-    `Mediante la presente se hace llegar los certificados de calibración y/o documentos de trazabilidad correspondientes a la Orden de Trabajo ${ot_number}.`,
-    '',
-    ...lineasAdjuntos,
-    '',
-    'Favor confirmar la recepción de los documentos por este medio.',
-    '',
-    'OBSERVACIONES:',
-    'Ante cualquier consulta sobre el detalle técnico de los certificados, no dude en escribirnos.',
-    '',
-    'Atte.',
-    '',
-    'E. Gabriel Ramírez Flores',
-    'Laboratorio MetroMecánica',
-    'laboratorio@metromecanica.com.pe',
-  ].join('\n')
-}
+  const campoBloqueado = (valor) => (
+    <div style={{
+      width: '100%', fontSize: '12px', padding: '7px 10px',
+      border: '1px solid var(--border)', borderRadius: '7px',
+      background: 'var(--bg)', color: 'var(--text2)',
+      boxSizing: 'border-box', opacity: 0.75,
+    }}>{valor || '—'}</div>
+  )
 
-function KpiCard({ label, value, sub, color }) {
   return (
-    <div className="card" style={{ flex: 1, minWidth: 160 }}>
-      <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 6 }}>
-        {label}
+    <div onClick={e => e.target === e.currentTarget && onClose()} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+      zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
+    }}>
+      <div style={{
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+        borderRadius: '14px', width: '100%', maxWidth: '500px',
+        maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '14px 18px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>Editar certificado</div>
+            <div style={{ fontSize: '11px', fontFamily: 'monospace', color: mag?.color, marginTop: '2px' }}>
+              {cert.codigo}{cert.ot_number ? ` · ${cert.ot_number}` : ''}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'var(--bg3)', border: '1px solid var(--border)',
+            borderRadius: '6px', color: 'var(--text2)', cursor: 'pointer',
+            width: '28px', height: '28px', fontSize: '14px',
+          }}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '16px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{
+            fontSize: '10px', color: 'var(--text2)', background: 'rgba(245,158,11,.08)',
+            border: '1px solid rgba(245,158,11,.25)', borderRadius: '7px', padding: '8px 10px',
+          }}>
+            🔒 El equipo, la OT y los datos del cliente quedan fijos una vez asignado el código — solo se puede
+            ajustar la fecha de calibración y las observaciones.
+          </div>
+          <div>
+            <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>Equipo</div>
+            {campoBloqueado(cert.equipo)}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>Marca</div>
+              {campoBloqueado(cert.marca)}
+            </div>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>Modelo</div>
+              {campoBloqueado(cert.modelo)}
+            </div>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>N° Serie</div>
+              {campoBloqueado(cert.numero_serie)}
+            </div>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>Cliente</div>
+              {campoBloqueado(cert.cliente)}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>Fecha calibración</div>
+            <input type="date" value={form.fecha_calibracion} onChange={set('fecha_calibracion')} style={{
+              width: '100%', fontSize: '12px', padding: '7px 10px',
+              border: '1px solid var(--border)', borderRadius: '7px',
+              background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
+            }}/>
+          </div>
+          <div>
+            <div style={{ fontSize: '9px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text2)', marginBottom: '5px' }}>Observaciones</div>
+            <textarea value={form.observaciones} onChange={set('observaciones')} rows={2} placeholder="Observaciones..." style={{
+              width: '100%', fontSize: '12px', padding: '7px 10px',
+              border: '1px solid var(--border)', borderRadius: '7px',
+              background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
+              resize: 'vertical',
+            }}/>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '12px 18px', borderTop: '1px solid var(--border)',
+          display: 'flex', gap: '8px', justifyContent: 'flex-end',
+        }}>
+          <button onClick={onClose} style={{
+            padding: '8px 16px', borderRadius: '7px',
+            border: '1px solid var(--border)', background: 'var(--bg3)',
+            color: 'var(--text2)', fontSize: '12px', cursor: 'pointer',
+          }}>Cancelar</button>
+          <button onClick={handleSave} disabled={saving} style={{
+            padding: '8px 20px', borderRadius: '7px', border: 'none',
+            background: saving ? 'var(--bg3)' : mag?.color || '#1D9E75',
+            color: saving ? 'var(--text2)' : '#fff',
+            fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+          }}>{saving ? 'Guardando...' : '✓ Guardar'}</button>
+        </div>
       </div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: color || 'var(--ocean-accent)', lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 4 }}>{sub}</div>}
     </div>
   )
 }
 
-function Badge({ estado }) {
-  const cfg = ESTADO_CFG[estado]
-  return (
-    <span
-      title={cfg.titulo}
-      style={{
-        fontSize: 11, fontWeight: 800, color: cfg.color, background: `${cfg.color}20`,
-        border: `1px solid ${cfg.color}55`, borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap',
-      }}
-    >
-      {cfg.texto}
-    </span>
-  )
-}
 
-// ── Modal de recordatorio — mismo patrón que Seguimiento de Facturas ────
-function ModalRecordatorio({ datos, onClose, onCambiarMensaje, onRegistrarEnvio }) {
-  const { ot, correo, mensaje, cargandoDocs, documentos } = datos
-  const [remitente, setRemitente] = useState(CUENTAS_REMITENTE[0].valor)
-  const linkGmail = construirLinkCorreo(correo, `Certificados de calibración — ${ot.ot_number}`, mensaje, remitente)
-
-  function copiarMensaje() {
-    navigator.clipboard.writeText(mensaje)
-  }
+// ── Modal selector de laboratorio ──────────────────────────────
+// SIEMPRE muestra el <select> de magnitud/laboratorio, editable.
+// Si hubo detección automática, se precarga como sugerencia (con
+// aviso visual), pero el usuario puede corregirla libremente antes
+// de confirmar. Ya no hay una rama "detectado -> solo mostrar texto".
+function ModalSelectLab({ datos, onConfirm, onClose }) {
+  const [magnitud, setMagnitud] = React.useState(datos.magnitud || '')
+  const fueDetectado = !!datos.magnitud
 
   return (
-    <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="card"
-        style={{ width: '100%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}
-      >
-        <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong style={{ fontSize: 16 }}>📧 Enviar certificados — OT {ot.ot_number}</strong>
-          <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onClose}>✕ Cerrar</button>
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{
+      position:'fixed',inset:0,background:'rgba(0,0,0,.75)',
+      zIndex:99999,display:'flex',alignItems:'center',justifyContent:'center',padding:16,
+    }}>
+      <div style={{
+        background:'var(--bg2)',border:'1px solid var(--border)',
+        borderRadius:14,width:420,maxWidth:'95vw',padding:24,
+        animation:'fadeUp .2s ease',
+      }}>
+        <div style={{fontSize:15,fontWeight:700,color:'var(--text)',marginBottom:4}}>
+          📋 Enviar a Certificados
+        </div>
+        <div style={{fontSize:11,color:'var(--text2)',marginBottom:16,fontFamily:'var(--mono)'}}>
+          {datos.equipo}
         </div>
 
-        <div style={{ padding: '20px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Para</label>
-              <input value={correo} readOnly style={{ width: '100%', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Enviar desde</label>
-              <select
-                value={remitente}
-                onChange={(e) => setRemitente(e.target.value)}
-                style={{ width: '100%', color: '#16232b', background: '#fff', fontWeight: 700 }}
-              >
-                {CUENTAS_REMITENTE.map((c) => (
-                  <option key={c.valor} value={c.valor} style={{ color: '#16232b' }}>{c.etiqueta}</option>
-                ))}
-              </select>
+        {fueDetectado && (
+          <div style={{
+            background:'rgba(0,229,184,.08)',border:'1px solid rgba(0,229,184,.3)',
+            borderRadius:8,padding:'10px 12px',marginBottom:12,
+            fontSize:11,color:'#00e5b8',fontFamily:'var(--mono)',
+          }}>
+            💡 Sugerencia automática: <b>{MAGNITUDES_LABEL[datos.magnitud] || datos.magnitud}</b>
+            <div style={{fontSize:10,color:'var(--text2)',marginTop:4}}>
+              Verifica y corrige si no corresponde 👇
             </div>
           </div>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-10px 0 0' }}>
-            Solo funciona si esa cuenta ya está logueada en tu navegador — si no, Gmail abrirá con la que sí lo esté.
-          </p>
+        )}
 
-          <div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 5 }}>Mensaje (editable)</label>
-            <textarea
-              value={mensaje}
-              onChange={(e) => onCambiarMensaje(e.target.value)}
-              rows={12}
-              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
-            />
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'1px',
+            color:'var(--text2)',fontFamily:'var(--mono)',marginBottom:6}}>
+            Laboratorio / Magnitud *
           </div>
-
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Documentos (ya incluidos arriba, organizados por carpeta)</label>
-            {cargandoDocs ? (
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>⏳ Buscando certificados y trazabilidades de esta OT...</p>
-            ) : !documentos || documentos.length === 0 ? (
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Aún no hay certificados ni trazabilidades subidas para esta OT.</span>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-                {documentos.map((doc) => (
-                  <a
-                    key={doc.id}
-                    href={doc.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn btn-secondary"
-                    style={{ fontSize: 12, textAlign: 'left', textDecoration: 'none', display: 'block' }}
-                  >
-                    👁 Ver {doc.tipo} — {doc.nombre}
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button className="btn btn-secondary" onClick={copiarMensaje}>📋 Copiar mensaje</button>
-          <a
-            className="btn"
-            href={linkGmail}
-            target="_blank"
-            rel="noreferrer"
-            title={`Gmail — ${remitente}`}
-            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-            onClick={() => onRegistrarEnvio(ot.ot_number)}
+          <select
+            value={magnitud}
+            onChange={e=>setMagnitud(e.target.value)}
+            style={{width:'100%',fontSize:13,padding:'9px 12px',
+              border:`1px solid ${magnitud?'var(--accent)':'var(--border)'}`,
+              borderRadius:8,background:'var(--bg3)',color:'var(--text)',outline:'none'}}
           >
-            📧 Abrir en Gmail para enviar
-          </a>
+            <option value="">— Seleccionar —</option>
+            {Object.entries(MAGNITUDES_LABEL).map(([id,lbl])=>(
+              <option key={id} value={id}>{lbl}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Preview de datos */}
+        <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px',marginBottom:16,
+          display:'flex',flexDirection:'column',gap:4}}>
+          {[['Equipo',datos.equipo],['Marca',datos.marca],['Modelo',datos.modelo],
+            ['N° Serie',datos.numero_serie],['Cliente',datos.cliente]].map(([k,v])=>v?(
+            <div key={k} style={{display:'flex',gap:8,fontSize:11}}>
+              <span style={{color:'var(--text2)',fontFamily:'var(--mono)',fontSize:9,
+                textTransform:'uppercase',width:60,flexShrink:0,paddingTop:1}}>{k}</span>
+              <span style={{color:'var(--text)',fontWeight:600}}>{v}</span>
+            </div>
+          ):null)}
+        </div>
+
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button onClick={onClose} style={{
+            padding:'7px 16px',borderRadius:7,border:'1px solid var(--border)',
+            background:'var(--bg3)',color:'var(--text2)',fontSize:12,cursor:'pointer',
+          }}>Cancelar</button>
+          <button
+            disabled={!magnitud}
+            onClick={()=>onConfirm({...datos, magnitud})}
+            style={{
+              padding:'7px 18px',borderRadius:7,border:'none',
+              background:!magnitud?'var(--bg3)':'#00e5b8',
+              color:!magnitud?'var(--text2)':'#000',
+              fontSize:12,fontWeight:700,cursor:'pointer',
+            }}>
+            ✓ Confirmar y abrir
+          </button>
         </div>
       </div>
     </div>
   )
 }
 
-// ── Fondo del toro — imagen real con movimiento sutil ────────────────────
-// Reemplaza el fondo marino de burbujas por la imagen que subiste a
-// Supabase Storage. Se mantiene claro (fondo base blanco/hueso detrás) y la
-// foto se atenúa bastante (opacidad baja) para que compita lo menos
-// posible con el texto — la imagen es muy oscura y dramática por sí sola.
-// Movimiento: "respiración" lenta (zoom sutil) + parallax al mover el
-// mouse, mismo mecanismo que en Facturas y en el fondo marino anterior.
-const URL_IMAGEN_TORO = 'https://ndcjjksaiecsuzperrhp.supabase.co/storage/v1/object/public/ot-files/toro_fondo.png'
+// ── Tarjeta de certificado ────────────────────────────────────
+function CertCard({ cert, onEstadoChange, onEdit, onAnular, currentUserId, esAdmin, onAbrirOT, onVerDocumentoOT }) {
+  const [expanded, setExpanded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const estado = ESTADOS[cert.estado] || ESTADOS.en_progreso
+  const mag = MAGNITUDES.find(m => m.id === cert.magnitud)
+  const esMio = cert.tecnico_id === currentUserId
 
-function FondoToroAnimado() {
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const handleEstado = async (e) => {
+    e.stopPropagation()
+    if (cert.estado === 'emitido' || cert.estado === 'anulado') return
+    setSaving(true)
+    const orden = ['en_progreso', 'revision', 'emitido']
+    const idx = orden.indexOf(cert.estado)
+    const next = orden[idx + 1]
+    if (next) await onEstadoChange(cert.id, next)
+    setSaving(false)
+  }
 
-  useEffect(() => {
-    function onMove(e) {
-      setOffset({
-        x: (e.clientX / window.innerWidth - 0.5) * 2,
-        y: (e.clientY / window.innerHeight - 0.5) * 2,
-      })
-    }
-    window.addEventListener('mousemove', onMove)
-    return () => window.removeEventListener('mousemove', onMove)
-  }, [])
+  const fecha = cert.created_at
+    ? new Date(cert.created_at).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—'
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: -1, overflow: 'hidden', pointerEvents: 'none' }}>
-      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(160deg, #f6f4ee 0%, #f0ede4 55%, #e9e4d8 100%)' }} />
-      <div
-        style={{
-          position: 'absolute',
-          right: '-8%',
-          bottom: '-6%',
-          width: 'min(65%, 820px)',
-          transform: `translate(${offset.x * 14}px, ${offset.y * 14}px)`,
-          transition: 'transform 0.4s ease-out',
-        }}
-      >
-        <img
-          src={URL_IMAGEN_TORO}
-          alt=""
+    <div style={{
+      background: 'var(--bg3)',
+      border: '0.5px solid var(--border)',
+      borderLeft: `3px solid ${mag?.color || '#00e5b8'}`,
+      borderRadius: '10px',
+      padding: '12px 14px',
+      marginBottom: '8px',
+    }}>
+      {/* Fila superior */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+        <span style={{
+          fontFamily: 'monospace', fontSize: '12px', fontWeight: '700',
+          color: mag?.color || '#00e5b8', letterSpacing: '0.5px', flex: 1,
+          cursor: 'pointer',
+        }} onClick={() => setExpanded(!expanded)}>{cert.codigo}</span>
+
+        {/* OT de origen — enlace para abrir esa OT directo desde aquí, y un
+             ojo aparte para ver SOLO el documento Word sin abrir todo el
+             modal de la OT (5 pestañas, edición, etc). */}
+        {cert.ot_number && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <span
+              onClick={e => { e.stopPropagation(); onAbrirOT?.(cert.ot_number) }}
+              title={`Abrir ${cert.ot_number}`}
+              style={{
+                fontFamily: 'monospace', fontSize: '10px', fontWeight: 700,
+                color: '#0ea5e9', background: 'rgba(14,165,233,.1)',
+                border: '0.5px solid rgba(14,165,233,.3)', borderRadius: '5px',
+                padding: '2px 8px', cursor: 'pointer',
+                textDecoration: 'underline', textUnderlineOffset: '2px',
+              }}
+            >
+              📄 {cert.ot_number}
+            </span>
+            <button
+              onClick={e => { e.stopPropagation(); onVerDocumentoOT?.(cert.ot_number) }}
+              title={`Ver solo el documento de ${cert.ot_number}`}
+              style={{
+                background: 'rgba(14,165,233,.1)', border: '0.5px solid rgba(14,165,233,.3)',
+                borderRadius: '5px', color: '#0ea5e9', cursor: 'pointer',
+                fontSize: '11px', padding: '2px 6px', lineHeight: 1,
+              }}
+            >👁</button>
+          </span>
+        )}
+
+        <span onClick={handleEstado} style={{
+          fontSize: '10px', padding: '2px 8px', borderRadius: '10px',
+          background: estado.bg, color: estado.color,
+          cursor: cert.estado !== 'emitido' && cert.estado !== 'anulado' ? 'pointer' : 'default',
+          opacity: saving ? 0.6 : 1, whiteSpace: 'nowrap', flexShrink: 0,
+        }}>{saving ? '...' : estado.label}</span>
+
+        {/* Botón editar — solo si es el técnico que lo creó */}
+        {esMio && (
+          <button onClick={e => { e.stopPropagation(); onEdit(cert) }} style={{
+            background: 'transparent', border: '0.5px solid var(--border)',
+            borderRadius: '5px', color: 'var(--text2)', cursor: 'pointer',
+            fontSize: '11px', padding: '2px 7px', flexShrink: 0,
+          }}>✏️</button>
+        )}
+        {/* Botón anular — solo admin o técnico dueño, solo si no está ya anulado */}
+        {(esAdmin || esMio) && cert.estado !== 'anulado' && (
+          <button onClick={e => {
+            e.stopPropagation()
+            const motivo = window.prompt(
+              `Anular ${cert.codigo}\n\nEl certificado quedará como ANULADO en el registro.\nEsto es requerido por ISO 17025.\n\nMotivo de anulación (opcional):`
+            )
+            if (motivo !== null) onAnular(cert.id, motivo || 'Sin motivo especificado')
+          }} style={{
+            background: 'transparent', border: '0.5px solid rgba(239,68,68,.3)',
+            borderRadius: '5px', color: '#ef4444', cursor: 'pointer',
+            fontSize: '10px', padding: '2px 7px', flexShrink: 0,
+            fontFamily: 'var(--mono)', fontWeight: 700,
+          }}>✕ Anular</button>
+        )}
+      </div>
+
+      <div onClick={() => setExpanded(!expanded)} style={{ cursor: 'pointer' }}>
+        {cert.estado === 'anulado' && (
+          <div style={{
+            fontSize: 9, fontFamily: 'var(--mono)', fontWeight: 700,
+            color: '#ef4444', background: 'rgba(239,68,68,.08)',
+            border: '1px solid rgba(239,68,68,.2)', borderRadius: 4,
+            padding: '2px 8px', marginBottom: 5, display: 'inline-block',
+          }}>
+            ✕ ANULADO {cert.motivo_anulacion ? `— ${cert.motivo_anulacion}` : ''}
+          </div>
+        )}
+        {cert.estado === 'emitido' && (
+          // ── Mismo anuncio destacado que en Ingresos (MetroTrack App.jsx) —
+          // ícono SVG en vez de emoji, se ve igual en cualquier sistema.
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 9,
+            padding: '8px 12px', borderRadius: 8, marginBottom: 6,
+            background: 'linear-gradient(135deg,#0ea472,#059669)',
+            boxShadow: '0 3px 12px rgba(16,185,129,.3)',
+          }}>
+            <div style={{
+              width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+              background: 'rgba(255,255,255,.22)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </div>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: '#fff', letterSpacing: '.2px' }}>
+              Certificado emitido{cert.fecha_emision ? ` — ${new Date(cert.fecha_emision).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}` : ''}
+            </span>
+          </div>
+        )}
+        <div style={{ fontSize: '13px', fontWeight: '600', color: cert.estado === 'anulado' ? 'var(--text2)' : 'var(--text)', marginBottom: '3px', lineHeight: 1.3, textDecoration: cert.estado === 'anulado' ? 'line-through' : 'none', opacity: cert.estado === 'anulado' ? 0.6 : 1 }}>
+          {cert.equipo}
+          {cert.marca && <span style={{ color: 'var(--text2)', fontWeight: '400' }}> — {cert.marca}</span>}
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--text2)', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {cert.cliente && <span>📍 {cert.cliente}</span>}
+          <span style={{ marginLeft: 'auto', color: 'var(--text3)' }}>{fecha}</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{
+          marginTop: '10px', paddingTop: '10px',
+          borderTop: '0.5px solid var(--border)',
+          fontSize: '11px', color: 'var(--text2)',
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px',
+        }}>
+          {cert.modelo && <span><b>Modelo:</b> {cert.modelo}</span>}
+          {cert.numero_serie && <span><b>N/S:</b> {cert.numero_serie}</span>}
+          {cert.tecnico_nombre && <span><b>Técnico:</b> {cert.tecnico_nombre}</span>}
+          {cert.fecha_calibracion && <span><b>Calibración:</b> {cert.fecha_calibracion}</span>}
+          {cert.observaciones && <span style={{ gridColumn: '1/-1' }}><b>Obs:</b> {cert.observaciones}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Formulario nuevo certificado ─────────────────────────────
+// ── FIX: ya no se puede crear un certificado escribiendo el equipo desde
+// cero en esta pantalla. Antes, cualquiera podía escribir un nombre de
+// equipo aquí mismo y darle "+ Agregar" sin que existiera ningún Ingreso
+// real detrás — eso generaba certificados "huérfanos", sin relación con
+// ningún equipo de una OT concreta, y rompía la coherencia de las rutas de
+// documentos (el certificado no correspondía a nada real en MinIO/Ingresos).
+// Ahora el formulario de creación SOLO aparece habilitado cuando los datos
+// llegan prellenados desde la pestaña "Ingresos" (botón "📋 → Certificados"
+// en MetroTrack). Sin ese prefill, se muestra un mensaje señalando el
+// camino correcto en vez del campo de texto libre.
+function NuevoForm({ magnitudActiva, proximoCodigo, onCrear, prefill, onPrefillApplied, onCertificadoAsignado }) {
+  const init = {
+    equipo: '', marca: '', modelo: '', numero_serie: '',
+    cliente: '', observaciones: '', ot_number: '', ingreso_id: null,
+    fecha_calibracion: new Date().toISOString().split('T')[0],
+  }
+  const [form, setForm] = useState(init)
+  const [saving, setSaving] = useState(false)
+  const [showExtra, setShowExtra] = useState(false)
+  const [habilitado, setHabilitado] = useState(false) // solo true tras llegar desde Ingresos
+  const mag = MAGNITUDES.find(m => m.id === magnitudActiva)
+  const codigo = proximoCodigo(magnitudActiva)
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  // Aplicar prefill cuando llega desde Ingresos — esta es la ÚNICA forma de
+  // habilitar el formulario de creación.
+  React.useEffect(() => {
+    if (!prefill) return
+    setForm(f => ({
+      ...f,
+      equipo:       prefill.equipo       || f.equipo,
+      marca:        prefill.marca        || f.marca,
+      modelo:       prefill.modelo       || f.modelo,
+      numero_serie: prefill.numero_serie || f.numero_serie,
+      cliente:      prefill.cliente      || f.cliente,
+      ot_number:    prefill.ot_number    || f.ot_number,
+      ingreso_id:   prefill.ingreso_id   ?? f.ingreso_id,
+    }))
+    setShowExtra(true)  // mostrar campos extra automáticamente
+    setHabilitado(true)
+    onPrefillApplied?.()
+  }, [prefill])
+
+  const handleSubmit = async () => {
+    if (!form.equipo.trim()) return
+    setSaving(true)
+    const result = await onCrear({ ...form, magnitud: magnitudActiva })
+    // ── Escribir el código de vuelta en el Ingreso que lo originó ──────────
+    // Sin esto, el código quedaba creado en la tabla certificados pero el
+    // campo "Código de Certificado" de ese equipo en Ingresos se quedaba
+    // vacío para siempre, en cualquier magnitud.
+    // El RPC crear_certificado puede devolver la fila como objeto directo
+    // {codigo:...} o envuelta en un array [{codigo:...}] según cómo la
+    // interprete PostgREST — se cubren ambos casos para no perder el dato
+    // en silencio si viene en la forma que no esperábamos.
+    if (result.ok && form.ot_number && form.ingreso_id) {
+      const filaCreada = Array.isArray(result.data) ? result.data[0] : result.data
+      const codigoCreado = filaCreada?.codigo
+      if (codigoCreado) {
+        await onCertificadoAsignado?.({
+          ot_number: form.ot_number,
+          ingreso_id: form.ingreso_id,
+          codigo: codigoCreado,
+        })
+      } else {
+        console.error('crear_certificado no devolvió un código utilizable:', result.data)
+      }
+    }
+    if (result.ok) { setForm(init); setShowExtra(false); setHabilitado(false) }
+    setSaving(false)
+  }
+
+  if (!habilitado) {
+    return (
+      <div style={{
+        borderBottom: '0.5px solid var(--border)',
+        background: 'var(--bg2)', padding: '14px 16px', flexShrink: 0,
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: '11px', color: 'var(--text2)', lineHeight: 1.5 }}>
+          Para asignar un código de certificado, ve a la pestaña <b style={{ color: 'var(--text)' }}>📦 Ingresos</b> de
+          la OT correspondiente y usa el botón <b style={{ color: 'var(--text)' }}>"📋 → Certificados"</b> junto al equipo.
+        </div>
+        <div style={{ fontSize: '9px', fontFamily: 'monospace', color: mag?.color, marginTop: '8px', letterSpacing: '0.5px' }}>
+          Próximo código de {mag?.label.toLowerCase()}: <b>{codigo}</b>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      borderBottom: '0.5px solid var(--border)',
+      background: 'var(--bg2)', padding: '10px 12px', flexShrink: 0,
+    }}>
+      <div style={{ fontSize: '10px', fontFamily: 'monospace', color: mag?.color, marginBottom: '8px', letterSpacing: '0.5px' }}>
+        Próximo código: <b>{codigo}</b>
+        {form.ot_number && <span style={{ color: '#0ea5e9', marginLeft: 10 }}>· 📄 {form.ot_number}</span>}
+      </div>
+      <div style={{ display: 'flex', gap: '6px', marginBottom: showExtra ? '8px' : '0' }}>
+        <input
+          value={form.equipo} onChange={set('equipo')}
+          onKeyDown={e => e.key === 'Enter' && !showExtra && handleSubmit()}
+          placeholder="Nombre del equipo..." disabled={saving}
           style={{
-            width: '100%',
-            height: 'auto',
-            display: 'block',
-            opacity: 0.16,
-            filter: 'grayscale(0.25) contrast(0.9) brightness(1.05)',
-            animation: 'respiroToro 13s ease-in-out infinite',
+            flex: 1, fontSize: '13px', padding: '9px 12px',
+            border: `1px solid ${mag?.color}40`, borderRadius: '8px',
+            background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
           }}
         />
+        <button onClick={() => setShowExtra(!showExtra)} style={{
+          padding: '9px 11px', borderRadius: '8px', border: '1px solid var(--border)',
+          background: showExtra ? `${mag?.color}20` : 'var(--bg3)',
+          color: showExtra ? mag?.color : 'var(--text2)',
+          fontSize: '14px', cursor: 'pointer', flexShrink: 0,
+        }}>⋯</button>
+        <button onClick={handleSubmit} disabled={saving || !form.equipo.trim()} style={{
+          padding: '9px 16px', borderRadius: '8px', border: 'none',
+          background: saving || !form.equipo.trim() ? 'var(--bg3)' : mag?.color || '#1D9E75',
+          color: saving || !form.equipo.trim() ? 'var(--text3)' : '#fff',
+          fontSize: '13px', fontWeight: '700', cursor: 'pointer', flexShrink: 0,
+        }}>{saving ? '...' : '+ Agregar'}</button>
       </div>
-      <style>{`
-        @keyframes respiroToro {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.035); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .certificados-tema-marino [style*="animation"] { animation: none !important; }
-        }
-      `}</style>
+      {showExtra && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+          {[['marca','Marca'],['modelo','Modelo'],['numero_serie','N° Serie'],['cliente','Cliente']].map(([k, lbl]) => (
+            <input key={k} value={form[k]} onChange={set(k)} placeholder={lbl} style={{
+              fontSize: '12px', padding: '7px 10px',
+              border: '0.5px solid var(--border)', borderRadius: '7px',
+              background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
+            }}/>
+          ))}
+          <input type="date" value={form.fecha_calibracion} onChange={set('fecha_calibracion')} style={{
+            fontSize: '12px', padding: '7px 10px',
+            border: '0.5px solid var(--border)', borderRadius: '7px',
+            background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
+          }}/>
+          <input value={form.observaciones} onChange={set('observaciones')} placeholder="Observaciones" style={{
+            fontSize: '12px', padding: '7px 10px',
+            border: '0.5px solid var(--border)', borderRadius: '7px',
+            background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
+          }}/>
+        </div>
+      )}
     </div>
   )
 }
 
-// ── Filtros persistidos en sessionStorage ────────────────────────────────
-// Sin esto, cualquier navegación fuera de esta pantalla (clic en una OT,
-// volver al Portal y reabrir la herramienta) resetea los filtros — muy
-// molesto cuando ya tenías armado un rango de fechas específico. Con
-// sessionStorage sobreviven mientras la pestaña del navegador siga
-// abierta, sin importar por dónde navegues y vuelvas.
-const CLAVE_FILTROS = 'certificados_filtros'
-
-function leerFiltrosGuardados() {
-  try {
-    return JSON.parse(sessionStorage.getItem(CLAVE_FILTROS)) || {}
-  } catch {
-    return {}
-  }
-}
-
-export default function SeguimientoCertificados({ profile, onLogout }) {
-  const navigate = useNavigate()
-  const [servicios, setServicios] = useState([])
-  const [documentos, setDocumentos] = useState([])
-  const [ultimoEnvioPorOT, setUltimoEnvioPorOT] = useState({})
-  const [loading, setLoading] = useState(true)
-  const filtrosGuardados = leerFiltrosGuardados()
-  const [tab, setTab] = useState(filtrosGuardados.tab || 'seguimiento') // 'seguimiento' | 'sin_documentos'
-  const [busqueda, setBusqueda] = useState(filtrosGuardados.busqueda || '')
-  const [fechaDesde, setFechaDesde] = useState(filtrosGuardados.fechaDesde || '')
-  const [fechaHasta, setFechaHasta] = useState(filtrosGuardados.fechaHasta || '')
-  const [modalRecordatorio, setModalRecordatorio] = useState(null)
-  const [mesSeleccionado, setMesSeleccionado] = useState(filtrosGuardados.mesSeleccionado || '')
-  const [anioSeleccionado, setAnioSeleccionado] = useState(filtrosGuardados.anioSeleccionado || '')
-
-  // Cada vez que cambia cualquier filtro, se guarda de inmediato — así la
-  // próxima vez que se entre a esta pantalla (aunque el componente se haya
-  // desmontado por completo) arranca igual a como se dejó.
-  useEffect(() => {
-    sessionStorage.setItem(CLAVE_FILTROS, JSON.stringify({
-      tab, busqueda, fechaDesde, fechaHasta, mesSeleccionado, anioSeleccionado,
-    }))
-  }, [tab, busqueda, fechaDesde, fechaHasta, mesSeleccionado, anioSeleccionado])
-
-  // Atajo: elegir mes + año rellena "Desde"/"Hasta" automáticamente con el
-  // primer y último día de ese mes — reemplaza el <input type="month">
-  // nativo (confuso, se veía como "---------- de ----") por dos selectores
-  // directos y grandes.
-  function aplicarMesRapido(mes, anio) {
-    if (!mes || !anio) { setFechaDesde(''); setFechaHasta(''); return }
-    const mesNum = Number(mes)
-    const ultimoDia = new Date(Number(anio), mesNum, 0).getDate()
-    setFechaDesde(`${anio}-${String(mesNum).padStart(2, '0')}-01`)
-    setFechaHasta(`${anio}-${String(mesNum).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`)
-  }
-
-  const acceso = AREAS_PERMITIDAS.includes(profile?.area)
-  const puedeEditar = AREAS_EDITAN.includes(profile?.area)
-
-  async function cargarDatos() {
-    setLoading(true)
-    const [{ data: svcs, error: errSvcs }, { data: docs, error: errDocs }, { data: envios, error: errEnvios }] = await Promise.all([
-      supabase.from('services').select('id, ot_number, client, ruc, status, due_date, ingresos, correo, contacto'),
-      supabase.from('documentos').select('id, ot_number, tipo_documento, nombre_archivo, ruta_minio, created_at')
-        .or(['certificado', 'trazabilidad'].map((t) => `tipo_documento.ilike.${t}`).join(',')),
-      supabase.from('envios_certificados').select('ot_number, enviado_en').order('enviado_en', { ascending: false }),
-    ])
-    if (errSvcs) console.error('Error cargando servicios:', errSvcs)
-    if (errDocs) console.error('Error cargando documentos:', errDocs)
-    if (errEnvios) console.error('Error cargando envíos:', errEnvios)
-    setServicios(svcs || [])
-    setDocumentos(docs || [])
-    // Solo el envío más reciente por OT (la lista ya viene ordenada desc).
-    const mapaEnvios = {}
-    for (const e of envios || []) {
-      if (!mapaEnvios[e.ot_number]) mapaEnvios[e.ot_number] = e.enviado_en
-    }
-    setUltimoEnvioPorOT(mapaEnvios)
-    setLoading(false)
-  }
-
-  // Se llama al hacer clic en "Abrir en Gmail para enviar" — deja constancia
-  // de que esa OT ya se le mandó correo, sin bloquear nada (no se espera).
-  function registrarEnvio(otNumber) {
-    supabase.from('envios_certificados').insert({ ot_number: otNumber }).then(({ error }) => {
-      if (error) { console.error('No se pudo registrar el envío:', error); return }
-      setUltimoEnvioPorOT((prev) => ({ ...prev, [otNumber]: new Date().toISOString() }))
-    })
-  }
+// ── Componente principal ──────────────────────────────────────
+export default function CertificadosModule({ prefill, onPrefillUsed, onAbrirOT, onVerDocumentoOT, onCertificadoAsignado }) {
+  const [magnitudActiva, setMagnitudActiva] = useState('masa_balanza')
+  const [busqueda, setBusqueda] = useState('')
+  const [mobile, setMobile] = useState(isMobile())
+  const [editando, setEditando] = useState(null)
+  const [currentUserId, setCurrentUserId] = useState(null)
+  const [modalLab, setModalLab] = useState(null)   // datos prefill pendiente de confirmar
+  const [formPrefill, setFormPrefill] = useState(null) // datos listos para inyectar en NuevoForm
+  const feedRef = useRef()
 
   useEffect(() => {
-    if (!acceso) return
-    cargarDatos()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [acceso])
-
-  // ── Combina servicios + documentos en una sola fila por OT ─────────────
-  const filas = useMemo(() => {
-    const docsPorOT = {}
-    for (const d of documentos) {
-      if (!docsPorOT[d.ot_number]) docsPorOT[d.ot_number] = { certificados: [], trazabilidades: [] }
-      const tipoLower = (d.tipo_documento || '').toLowerCase()
-      if (tipoLower === 'certificado') docsPorOT[d.ot_number].certificados.push(d)
-      else if (tipoLower === 'trazabilidad') docsPorOT[d.ot_number].trazabilidades.push(d)
-    }
-
-    return servicios.map((s) => {
-      const equipos = contarEquipos(s.ingresos)
-      const docs = docsPorOT[s.ot_number] || { certificados: [], trazabilidades: [] }
-      const estado = calcularEstado(equipos, docs.certificados.length, docs.trazabilidades.length)
-      return {
-        ...s,
-        equipos,
-        certificados: docs.certificados.length,
-        trazabilidades: docs.trazabilidades.length,
-        docsCertificados: docs.certificados,
-        docsTrazabilidades: docs.trazabilidades,
-        estado,
-        ultimoEnvio: ultimoEnvioPorOT[s.ot_number] || null,
+    const handler = () => setMobile(isMobile())
+    window.addEventListener('resize', handler)
+    supabase.auth.getUser().then(async ({ data }) => {
+      const uid = data?.user?.id || null
+      setCurrentUserId(uid)
+      if (uid) {
+        const { data: prof } = await supabase
+          .from('profiles').select('role').eq('id', uid).single()
+        setEsAdmin(prof?.role === 'admin')
       }
     })
-  }, [servicios, documentos, ultimoEnvioPorOT])
+    return () => window.removeEventListener('resize', handler)
+  }, [])
 
-  const kpis = useMemo(() => {
-    const conEquipos = filas.filter((f) => f.equipos > 0)
-    const sinDocs = conEquipos.filter((f) => f.estado === 'sin_documentos')
-    const parciales = conEquipos.filter((f) => f.estado === 'parcial')
-    const completas = conEquipos.filter((f) => f.estado === 'completo')
-    const equiposPendientes = conEquipos.reduce((acc, f) => acc + Math.max(0, f.equipos - Math.min(f.certificados, f.trazabilidades)), 0)
-    return {
-      totalOTs: conEquipos.length,
-      sinDocs: sinDocs.length,
-      parciales: parciales.length,
-      completas: completas.length,
-      equiposPendientes,
-    }
-  }, [filas])
+  // Recibir prefill desde Ingresos
+  useEffect(() => {
+    if (!prefill) return
+    // Siempre mostramos el modal de selección/confirmación de laboratorio,
+    // tanto si hubo detección automática como si no. El usuario decide.
+    setModalLab(prefill)
+    onPrefillUsed?.()
+  }, [prefill])
 
-  const filasFiltradas = useMemo(() => {
-    return filas
-      .filter((f) => f.equipos > 0)
-      .filter((f) => {
-        if (tab === 'sin_documentos') return f.estado !== 'completo'
-        return true
-      })
-      .filter((f) => {
-        if (!busqueda.trim()) return true
-        const q = busqueda.trim().toLowerCase()
-        return (f.ot_number || '').toLowerCase().includes(q) || (f.client || '').toLowerCase().includes(q)
-      })
-      .filter((f) => {
-        if (!fechaDesde && !fechaHasta) return true
-        if (!f.due_date) return false
-        if (fechaDesde && f.due_date < fechaDesde) return false
-        if (fechaHasta && f.due_date > fechaHasta) return false
-        return true
-      })
-      .sort((a, b) => {
-        if (!a.due_date && !b.due_date) return 0
-        if (!a.due_date) return 1
-        if (!b.due_date) return -1
-        return new Date(a.due_date) - new Date(b.due_date)
-      })
-  }, [filas, tab, busqueda, fechaDesde, fechaHasta])
-
-  // ── Siempre la página pública, sin importar cuántos documentos haya ────
-  // El modal aparece de inmediato con lo que ya se tiene; el enlace se
-  // agrega al mensaje apenas está listo, en segundo plano, sin bloquear
-  // ── Genera los ZIP de certificados y trazabilidad en segundo plano ─────
-  // Aparece de inmediato — todos los enlaces se construyen directo de los
-  // datos que ya tenemos cargados, sin ninguna llamada de red adicional.
-  function abrirRecordatorio(fila) {
-    const correo = fila.correo || ''
-    if (!correo) {
-      alert('Esta OT no tiene un correo de contacto registrado en MetroTrack (pestaña Datos).')
-      return
-    }
-    const documentos = [...fila.docsCertificados, ...fila.docsTrazabilidades].map((d) => ({
-      id: d.id, tipo: d.tipo_documento, nombre: d.nombre_archivo, url: construirEnlaceDocumento(d.ruta_minio),
-    }))
-
-    setModalRecordatorio({ ot: fila, correo, mensaje: armarMensajeRecordatorio(fila), cargandoDocs: false, documentos })
+  const handleConfirmLab = (datos) => {
+    setMagnitudActiva(datos.magnitud)
+    setFormPrefill(datos)
+    setModalLab(null)
   }
 
-  if (!acceso) {
-    return (
-      <div className="container" style={{ maxWidth: 600, margin: '80px auto', textAlign: 'center' }}>
-        <h2>Acceso no autorizado</h2>
-        <p style={{ color: 'var(--text-muted)' }}>Esta herramienta es solo para administración por ahora.</p>
-        <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al panel</a>
-      </div>
-    )
+  const {
+    certificados, loading, error, onlineUsers,
+    crearCertificado, actualizarEstado, editarCertificado, proximoCodigo,
+    refetch,
+  } = useCertificados(magnitudActiva)
+
+  const anularCertificado = async (id, motivo) => {
+    await supabase.from('certificados')
+      .update({ estado: 'anulado', motivo_anulacion: motivo })
+      .eq('id', id)
+    refetch()
+  }
+
+  const [esAdmin, setEsAdmin] = useState(false)
+
+  const magActiva = MAGNITUDES.find(m => m.id === magnitudActiva)
+
+  const filtrados = certificados.filter(c => {
+    if (!busqueda) return true
+    const q = busqueda.toLowerCase()
+    return c.codigo?.toLowerCase().includes(q) ||
+      c.equipo?.toLowerCase().includes(q) ||
+      c.cliente?.toLowerCase().includes(q)
+  })
+
+  const cambiarMagnitud = (id) => {
+    setMagnitudActiva(id)
+    setBusqueda('')
   }
 
   return (
-    <div className="container container-ancho certificados-tema-marino" style={{ maxWidth: 1500, margin: '0 auto', position: 'relative', minHeight: '100vh' }}>
-      <style>{`
-        .certificados-tema-marino {
-          --ocean-accent: #1f7a8c;
-          --border: #b9dde8;
-          --text: #16232b;
-          --text-muted: #4a6470;
-          --danger: #c65b3a;
-        }
-        .certificados-tema-marino .card {
-          border-radius: 16px;
-          border-color: rgba(31, 122, 140, 0.28);
-          background: rgba(240, 251, 253, 0.85);
-          backdrop-filter: blur(2px);
-          color: #16232b;
-        }
-        .certificados-tema-marino input {
-          background: rgba(255, 253, 250, 0.92);
-          color: #16232b;
-          border-color: rgba(31, 122, 140, 0.3);
-        }
-        .certificados-tema-marino .btn {
-          background: #1f7a8c;
-          color: #f0fbfd;
-          border-radius: 10px;
-          border: none;
-        }
-        .certificados-tema-marino .btn-secondary {
-          border-radius: 10px;
-          border-color: rgba(31, 122, 140, 0.35);
-          background: rgba(31, 122, 140, 0.08);
-          color: #163542;
-        }
-        .certificados-tema-marino h1,
-        .certificados-tema-marino h2,
-        .certificados-tema-marino h3,
-        .certificados-tema-marino h4,
-        .certificados-tema-marino strong {
-          color: #101c22 !important;
-        }
-        .certificados-tema-marino p,
-        .certificados-tema-marino label,
-        .certificados-tema-marino th {
-          color: #375160 !important;
-        }
-        .certificados-tema-marino .link-back {
-          color: #1a6b7a !important;
-          font-weight: 700;
-        }
-        .certificados-tema-marino td {
-          color: #16232b;
-        }
-        .certificados-tema-marino a {
-          color: #1a6b7a;
-        }
-      `}</style>
-      <FondoToroAnimado />
-      <div className="top-bar" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <a className="link-back" onClick={() => navigate('/')}>&larr; Volver al panel</a>
-          <h2 style={{ margin: '8px 0 0' }}>🔬 Certificados y Trazabilidades</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '4px 0 0' }}>Seguimiento de Laboratorio — Administración</p>
-        </div>
-        {onLogout && <button className="btn btn-secondary" onClick={onLogout}>Salir</button>}
-      </div>
+    <div style={{
+      display: 'flex',
+      flexDirection: mobile ? 'column' : 'row',
+      height: mobile ? 'calc(100vh - 220px)' : 'calc(100vh - 148px)',
+      background: 'var(--bg)', overflow: 'hidden',
+    }}>
 
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '20px 0' }}>
-        <KpiCard label="OTs con equipos" value={kpis.totalOTs} />
-        <KpiCard label="Sin documentos" value={kpis.sinDocs} color="#c65b3a" />
-        <KpiCard label="Parciales" value={kpis.parciales} color="#a97a2e" />
-        <KpiCard label="Completas" value={kpis.completas} color="#4c8a63" />
-        <KpiCard label="Equipos pendientes" value={kpis.equiposPendientes} sub="Sin certificado o trazabilidad" color="#a35f27" />
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)' }}>
-        <button
-          onClick={() => setTab('seguimiento')}
-          style={{ padding: '10px 18px', border: 'none', background: 'transparent', cursor: 'pointer', fontWeight: 700, fontSize: 13, color: tab === 'seguimiento' ? 'var(--ocean-accent)' : 'var(--text-muted)', borderBottom: `2px solid ${tab === 'seguimiento' ? 'var(--ocean-accent)' : 'transparent'}` }}
-        >
-          🔬 Seguimiento
-        </button>
-        <button
-          onClick={() => setTab('sin_documentos')}
-          style={{ padding: '10px 18px', border: 'none', background: 'transparent', cursor: 'pointer', fontWeight: 700, fontSize: 13, color: tab === 'sin_documentos' ? 'var(--ocean-accent)' : 'var(--text-muted)', borderBottom: `2px solid ${tab === 'sin_documentos' ? 'var(--ocean-accent)' : 'transparent'}` }}
-        >
-          🚫 Falta algo ({kpis.sinDocs + kpis.parciales})
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
-        <div>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Buscar</label>
-          <input
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar por OT o cliente..."
-            style={{ width: 260, fontSize: 16, fontWeight: 700, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10 }}
-          />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Mes rápido</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <select
-              value={mesSeleccionado}
-              onChange={(e) => { setMesSeleccionado(e.target.value); aplicarMesRapido(e.target.value, anioSeleccionado) }}
-              style={{ width: 140, fontSize: 16, fontWeight: 800, padding: '10px 8px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
-            >
-              <option value="">Mes</option>
-              {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'].map((nombre, i) => (
-                <option key={i} value={i + 1}>{nombre}</option>
-              ))}
-            </select>
-            <select
-              value={anioSeleccionado}
-              onChange={(e) => { setAnioSeleccionado(e.target.value); aplicarMesRapido(mesSeleccionado, e.target.value) }}
-              style={{ width: 100, fontSize: 16, fontWeight: 800, padding: '10px 8px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
-            >
-              <option value="">Año</option>
-              {[2025, 2026, 2027, 2028].map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
+      {/* SIDEBAR */}
+      <div style={{
+        width: mobile ? '100%' : '210px', flexShrink: 0,
+        background: 'var(--bg2)',
+        borderRight: mobile ? 'none' : '0.5px solid var(--border)',
+        borderBottom: mobile ? '0.5px solid var(--border)' : 'none',
+        padding: mobile ? '8px 12px' : '14px 8px',
+      }}>
+        {!mobile && (
+          <div style={{ padding: '4px 8px 12px', borderBottom: '0.5px solid var(--border)', marginBottom: '8px' }}>
+            <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text)' }}>Certificados</div>
+            <div style={{ fontSize: '10px', color: 'var(--text3)', marginTop: '2px' }}>Metromecanica Lab</div>
           </div>
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Desde</label>
-          <input
-            type="date"
-            value={fechaDesde}
-            onChange={(e) => setFechaDesde(e.target.value)}
-            style={{ width: 175, fontSize: 16, fontWeight: 800, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
-          />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', color: '#16232b', marginBottom: 5 }}>Hasta</label>
-          <input
-            type="date"
-            value={fechaHasta}
-            onChange={(e) => setFechaHasta(e.target.value)}
-            style={{ width: 175, fontSize: 16, fontWeight: 800, padding: '10px 12px', border: '3px solid var(--ocean-accent)', borderRadius: 10, color: '#16232b' }}
-          />
-        </div>
-        {(fechaDesde || fechaHasta) && (
-          <button className="btn btn-secondary" style={{ fontSize: 14, fontWeight: 800, padding: '10px 16px' }} onClick={() => { setFechaDesde(''); setFechaHasta('') }}>
-            ✕ Limpiar fechas
-          </button>
         )}
-      </div>
-
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {loading ? (
-          <p style={{ padding: 16, color: 'var(--text-muted)' }}>Cargando...</p>
-        ) : filasFiltradas.length === 0 ? (
-          <p style={{ padding: 16, color: 'var(--text-muted)' }}>No hay OTs que coincidan.</p>
+        {mobile ? (
+          <select value={magnitudActiva} onChange={e => cambiarMagnitud(e.target.value)} style={{
+            width: '100%', fontSize: '13px', fontWeight: '600', padding: '8px 12px',
+            borderRadius: '8px', border: `1px solid ${magActiva?.color || 'var(--border)'}`,
+            background: 'var(--bg3)', color: magActiva?.color || 'var(--text)',
+            outline: 'none', cursor: 'pointer',
+          }}>
+            {MAGNITUDES.map(mag => (
+              <option key={mag.id} value={mag.id}>{mag.label}</option>
+            ))}
+          </select>
         ) : (
-          <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '65vh' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  {['OT', 'Fecha', 'Cliente', 'Equipos', 'Certificados', 'Trazabilidades', 'Estado', 'Envío', 'Enviar'].map((h) => (
-                    <th key={h} style={{ position: 'sticky', top: 0, background: 'rgba(240, 251, 253, 0.97)', padding: '10px', textAlign: 'left', fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filasFiltradas.map((f) => (
-                  <tr key={f.id}>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                      <a onClick={() => navigate(`/ot/${f.ot_number}`)} style={{ cursor: 'pointer', color: 'var(--ocean-accent)' }}>{f.ot_number}</a>
-                    </td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>{fmtFecha(f.due_date)}</td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.client || '—'}</td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>{f.equipos}</td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', fontWeight: 700, color: f.certificados >= f.equipos ? '#4c8a63' : '#c65b3a' }}>
-                      {f.certificados} / {f.equipos}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', fontWeight: 700, color: f.trazabilidades >= f.equipos ? '#4c8a63' : '#c65b3a' }}>
-                      {f.trazabilidades} / {f.equipos}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)' }}><Badge estado={f.estado} /></td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap', fontSize: 11.5 }}>
-                      {f.ultimoEnvio ? (
-                        <span style={{ color: '#2f8f5b', fontWeight: 700 }} title={new Date(f.ultimoEnvio).toLocaleString('es-PE')}>
-                          ✉ Enviado {fmtFecha(f.ultimoEnvio.slice(0, 10))}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>— Sin enviar</span>
-                      )}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: '1px solid rgba(255,255,255,0.06)', whiteSpace: 'nowrap' }}>
-                      {puedeEditar && (
-                        <button className="btn btn-secondary" style={{ fontSize: 12, padding: '5px 10px' }} onClick={() => abrirRecordatorio(f)}>
-                          📧 Enviar
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          MAGNITUDES.map(mag => (
+            <button key={mag.id} onClick={() => cambiarMagnitud(mag.id)} style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '7px 10px', margin: '1px 0', borderRadius: '7px',
+              border: 'none', width: '100%', textAlign: 'left',
+              background: magnitudActiva === mag.id ? 'var(--bg3)' : 'transparent',
+              color: magnitudActiva === mag.id ? 'var(--text)' : 'var(--text2)',
+              fontSize: '12px', fontWeight: magnitudActiva === mag.id ? '600' : '400',
+              cursor: 'pointer',
+            }}>
+              <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: mag.color, flexShrink: 0 }}/>
+              {mag.label}
+            </button>
+          ))
         )}
       </div>
 
-      {modalRecordatorio && (
-        <ModalRecordatorio
-          datos={modalRecordatorio}
-          onClose={() => setModalRecordatorio(null)}
-          onCambiarMensaje={(m) => setModalRecordatorio((prev) => ({ ...prev, mensaje: m }))}
-          onRegistrarEnvio={registrarEnvio}
+      {/* MAIN */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {/* Topbar */}
+        <div style={{
+          padding: mobile ? '8px 12px' : '10px 16px',
+          borderBottom: '0.5px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: '8px',
+          background: 'var(--bg2)', flexShrink: 0,
+        }}>
+          <span style={{ fontSize: mobile ? '13px' : '14px', fontWeight: '600', color: magActiva?.color }}>
+            # {magActiva?.label.toLowerCase()}
+          </span>
+          <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar..." style={{
+            flex: 1, maxWidth: mobile ? '100%' : '280px',
+            fontSize: '12px', padding: '5px 10px',
+            border: '0.5px solid var(--border)', borderRadius: '16px',
+            background: 'var(--bg3)', color: 'var(--text)', outline: 'none',
+          }}/>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#1D9E75' }}/>
+            <span style={{ fontSize: '10px', color: '#0F6E56' }}>{onlineUsers}</span>
+          </div>
+        </div>
+
+        {/* Formulario — arriba, junto al encabezado, para no tener que
+             bajar hasta el final de la lista cada vez que se agrega un
+             código nuevo. */}
+        <NuevoForm magnitudActiva={magnitudActiva} proximoCodigo={proximoCodigo} onCrear={crearCertificado} prefill={formPrefill} onPrefillApplied={()=>setFormPrefill(null)} onCertificadoAsignado={onCertificadoAsignado} />
+
+        {/* Feed */}
+        <div ref={feedRef} style={{ flex: 1, overflowY: 'auto', padding: mobile ? '10px 12px' : '12px 16px' }}>
+          {loading && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text3)', fontSize: '13px' }}>Cargando...</div>}
+          {error && <div style={{ padding: '12px', background: '#FCEBEB', borderRadius: '8px', color: '#A32D2D', fontSize: '12px' }}>Error: {error}</div>}
+          {!loading && filtrados.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text3)' }}>
+              <div style={{ fontSize: '28px', marginBottom: '10px' }}>📋</div>
+              <div style={{ fontSize: '13px' }}>{busqueda ? 'Sin resultados' : `No hay certificados de ${magActiva?.label.toLowerCase()} aún`}</div>
+              <div style={{ fontSize: '11px', marginTop: '6px' }}>Próximo: <b style={{ color: magActiva?.color }}>{proximoCodigo(magnitudActiva)}</b></div>
+            </div>
+          )}
+          {filtrados.map(cert => (
+            <CertCard
+              key={cert.id}
+              cert={cert}
+              onEstadoChange={actualizarEstado}
+              onEdit={setEditando}
+              onAnular={anularCertificado}
+              currentUserId={currentUserId}
+              esAdmin={esAdmin}
+              onAbrirOT={onAbrirOT}
+              onVerDocumentoOT={onVerDocumentoOT}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Modal selector laboratorio (desde Ingresos) */}
+      {modalLab && (
+        <ModalSelectLab
+          datos={modalLab}
+          onConfirm={handleConfirmLab}
+          onClose={() => setModalLab(null)}
         />
       )}
+
+      {/* Modal edición */}
+      {editando && (
+        <EditModal
+          cert={editando}
+          onClose={() => setEditando(null)}
+          onSave={editarCertificado}
+        />
+      )}
+
+      <style>{`
+        :root { --text3: #4a5568; }
+        input:focus, textarea:focus { border-color: var(--accent) !important; }
+      `}</style>
     </div>
   )
 }
