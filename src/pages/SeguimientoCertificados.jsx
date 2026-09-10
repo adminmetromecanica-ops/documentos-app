@@ -86,10 +86,16 @@ const ESTADO_CFG = {
   sin_equipos: { color: '#6b7280', titulo: 'Esta OT no tiene equipos registrados en Ingresos', texto: 'SIN EQUIPOS' },
 }
 
+// ── FIX: antes exigía tantas trazabilidades como equipos (1 a 1), pero un
+// mismo patrón puede respaldar varios certificados a la vez — no hay una
+// trazabilidad por equipo, sino una por patrón usado (que puede ser
+// compartido). Mientras no exista un cruce automático por patrón (ver idea
+// más abajo), el criterio pragmático es: certificados sí deben ser uno por
+// equipo, pero para trazabilidad basta con que haya AL MENOS UNA subida.
 function calcularEstado(equipos, certificados, trazabilidades) {
   if (equipos === 0) return 'sin_equipos'
   if (certificados === 0 && trazabilidades === 0) return 'sin_documentos'
-  if (certificados >= equipos && trazabilidades >= equipos) return 'completo'
+  if (certificados >= equipos && trazabilidades >= 1) return 'completo'
   return 'parcial'
 }
 
