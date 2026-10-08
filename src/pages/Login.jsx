@@ -1,82 +1,108 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
+// ── Dispositivo de confianza ────────────────────────────────────────────
+// Después de verificar el código del correo, el usuario puede marcar
+// "Recordar este equipo por 30 días". Mientras no venza, en esa PC solo
+// se pide correo + contraseña (sin código). Se guarda por correo.
+const CLAVE_CONFIANZA = 'mm_dispositivos_confiables'
+const DIAS_CONFIANZA = 30
+
+function leerConfianza() {
+  try {
+    return JSON.parse(localStorage.getItem(CLAVE_CONFIANZA) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function esDispositivoConfiable(email) {
+  const vence = leerConfianza()[email]
+  return typeof vence === 'number' && vence > Date.now()
+}
+
+function marcarDispositivoConfiable(email) {
+  try {
+    const datos = leerConfianza()
+    datos[email] = Date.now() + DIAS_CONFIANZA * 24 * 60 * 60 * 1000
+    localStorage.setItem(CLAVE_CONFIANZA, JSON.stringify(datos))
+  } catch {
+    // Si el navegador no permite guardar, simplemente pedirá código la próxima vez
+  }
+}
+
+const SEGUNDOS_REENVIO = 60
+
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [aviso, setAviso] = useState('')
   const [loading, setLoading] = useState(false)
-  const [revisandoSesion, setRevisandoSesion] = useState(true)
 
-  // Paso 2: verificación TOTP (solo aparece si la cuenta tiene 2FA activado)
+  // Paso 2: código de 6 dígitos enviado al correo del usuario
   const [pidiendoCodigo, setPidiendoCodigo] = useState(false)
   const [codigo, setCodigo] = useState('')
-  const [factorId, setFactorId] = useState(null)
+  const [recordar, setRecordar] = useState(true)
+  const [espera, setEspera] = useState(0)
 
-  // Si ya existe una sesión (nivel 1) que necesita el segundo factor —por
-  // ejemplo, App.jsx nos devolvió aquí porque la sesión no alcanzó aal2—
-  // saltamos directo a pedir el código, sin volver a pedir la contraseña.
+  // Cuenta regresiva para el botón "Reenviar código"
   useEffect(() => {
-    async function revisarSesionExistente() {
-      const { data: sessionData } = await supabase.auth.getSession()
-      if (!sessionData.session) {
-        setRevisandoSesion(false)
-        return
+    if (espera <= 0) return
+    const t = setTimeout(() => setEspera((s) => s - 1), 1000)
+    return () => clearTimeout(t)
+  }, [espera])
+
+  function correoNormalizado() {
+    return email.trim().toLowerCase()
+  }
+
+  async function enviarCodigo(correo) {
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: correo,
+      options: { shouldCreateUser: false },
+    })
+    if (otpError) {
+      if (otpError.status === 429 || /rate|seconds/i.test(otpError.message || '')) {
+        setError('Espera un minuto antes de pedir otro código.')
+      } else {
+        setError('No se pudo enviar el código al correo. Intenta de nuevo.')
       }
-      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-      if (aalData && aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
-        const { data: factorsData } = await supabase.auth.mfa.listFactors()
-        const totp = (factorsData?.totp || []).find((f) => f.status === 'verified')
-        if (totp) {
-          setFactorId(totp.id)
-          setPidiendoCodigo(true)
-        }
-      }
-      setRevisandoSesion(false)
+      return false
     }
-    revisarSesionExistente()
-  }, [])
+    setEspera(SEGUNDOS_REENVIO)
+    return true
+  }
 
   async function handleLogin(e) {
     e.preventDefault()
     setError('')
+    setAviso('')
     setLoading(true)
+    const correo = correoNormalizado()
 
-    const { error: loginError } = await supabase.auth.signInWithPassword({ email, password })
+    // 1) Validar la contraseña
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email: correo, password })
     if (loginError) {
       setError('Correo o contraseña incorrectos.')
       setLoading(false)
       return
     }
 
-    // ¿Esta cuenta requiere un segundo factor (TOTP)?
-    const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-    if (aalError) {
-      setError('No se pudo verificar el nivel de seguridad de la cuenta.')
+    // 2) Equipo de confianza vigente: la sesión ya quedó abierta, App.jsx la detecta sola
+    if (esDispositivoConfiable(correo)) {
       setLoading(false)
       return
     }
 
-    if (aalData.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
-      const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors()
-      if (factorsError) {
-        setError('No se pudo cargar el segundo factor de esta cuenta.')
-        setLoading(false)
-        return
-      }
-      const totp = (factorsData.totp || []).find((f) => f.status === 'verified')
-      if (!totp) {
-        setError('Esta cuenta requiere un segundo factor, pero no se encontró configurado.')
-        setLoading(false)
-        return
-      }
-      setFactorId(totp.id)
+    // 3) Equipo nuevo o vencido: cerramos esta sesión y enviamos el código al correo.
+    //    La sesión definitiva solo se abre cuando el código es correcto.
+    await supabase.auth.signOut({ scope: 'local' })
+    const enviado = await enviarCodigo(correo)
+    if (enviado) {
       setPidiendoCodigo(true)
-      setLoading(false)
-      return
+      setAviso(`Enviamos un código de 6 dígitos a ${correo}.`)
     }
-
-    // Sin 2FA: el login ya quedó completo (App.jsx detecta la sesión sola)
     setLoading(false)
   }
 
@@ -84,42 +110,42 @@ export default function Login() {
     e.preventDefault()
     setError('')
     setLoading(true)
+    const correo = correoNormalizado()
 
-    const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({ factorId })
-    if (challengeError) {
-      setError('No se pudo iniciar la verificación. Intenta de nuevo.')
-      setLoading(false)
-      return
-    }
-
-    const { error: verifyError } = await supabase.auth.mfa.verify({
-      factorId,
-      challengeId: challengeData.id,
-      code: codigo,
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: correo,
+      token: codigo,
+      type: 'email',
     })
 
     if (verifyError) {
-      setError('Código incorrecto. Verifica tu app de autenticación e intenta de nuevo.')
+      setError('Código incorrecto o vencido. Revisa el último correo recibido o pide uno nuevo.')
       setCodigo('')
       setLoading(false)
       return
     }
 
-    // Verificado: forzamos una recarga completa para que App.jsx vuelva a
-    // evaluar la sesión desde cero y confirme que ya alcanzó aal2.
+    if (recordar) marcarDispositivoConfiable(correo)
+
+    // Verificado: recarga completa para que App.jsx evalúe la sesión desde cero
     window.location.reload()
   }
 
-  async function handleCancelarCodigo() {
-    await supabase.auth.signOut()
-    setPidiendoCodigo(false)
-    setCodigo('')
-    setFactorId(null)
+  async function handleReenviar() {
     setError('')
+    setAviso('')
+    setLoading(true)
+    const enviado = await enviarCodigo(correoNormalizado())
+    if (enviado) setAviso('Te enviamos un código nuevo. Usa solo el más reciente.')
+    setLoading(false)
   }
 
-  if (revisandoSesion) {
-    return <div className="container">Cargando...</div>
+  function handleCancelarCodigo() {
+    setPidiendoCodigo(false)
+    setCodigo('')
+    setPassword('')
+    setError('')
+    setAviso('')
   }
 
   if (pidiendoCodigo) {
@@ -128,24 +154,44 @@ export default function Login() {
         <div className="card">
           <h2 style={{ marginTop: 0 }}>Verificación en dos pasos</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-            Ingresa el código de 6 dígitos de tu app de autenticación (Google Authenticator, Authy, etc.).
+            Ingresa el código de 6 dígitos que llegó a <strong>{correoNormalizado()}</strong>.
+            Revisa también la carpeta de spam.
           </p>
           <form onSubmit={handleVerificarCodigo}>
             <label>Código</label>
             <input
               type="text"
               inputMode="numeric"
+              autoComplete="one-time-code"
               maxLength={6}
               value={codigo}
               onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ''))}
               autoFocus
               required
             />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, margin: '8px 0 12px' }}>
+              <input
+                type="checkbox"
+                checked={recordar}
+                onChange={(e) => setRecordar(e.target.checked)}
+                style={{ width: 'auto', margin: 0 }}
+              />
+              Recordar este equipo por {DIAS_CONFIANZA} días
+            </label>
             <button className="btn" type="submit" disabled={loading || codigo.length !== 6} style={{ width: '100%' }}>
               {loading ? 'Verificando...' : 'Verificar'}
             </button>
+            {aviso && !error && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{aviso}</p>}
             {error && <p className="error-msg">{error}</p>}
           </form>
+          <button
+            className="btn btn-secondary"
+            onClick={handleReenviar}
+            disabled={loading || espera > 0}
+            style={{ width: '100%', marginTop: 8 }}
+          >
+            {espera > 0 ? `Reenviar código (${espera} s)` : 'Reenviar código'}
+          </button>
           <button
             className="btn btn-secondary"
             onClick={handleCancelarCodigo}
